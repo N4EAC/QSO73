@@ -1469,6 +1469,14 @@ private:
             if (auto source = ax25_ui_source(payload); !source.empty()) {
                 info.callsign = source;
                 info.callsign_source = "ax25";
+                if (payload.size()>22 && std::string(payload.begin()+16,payload.begin()+22)=="~Q73P:") {
+                    std::string body(payload.begin()+22,payload.end());
+                    if(cJSON* ping=cJSON_Parse(body.c_str())) {
+                        cJSON* id=cJSON_GetObjectItemCaseSensitive(ping,"id");
+                        if(cJSON_IsString(id))info.application_id=id->valuestring;
+                        cJSON_Delete(ping);
+                    }
+                }
             }
             {
                 std::lock_guard<std::mutex> lock(rx_history_mutex_);

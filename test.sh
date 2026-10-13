@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 mkdir -p build/module-cache
 swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network Sources/Protocol.swift Sources/RigController.swift Sources/SettingsProfile.swift Sources/RadioMacros.swift Sources/Beacon.swift Tests/Modem73ProtocolTests.swift -o build/modem73-protocol-tests
 build/modem73-protocol-tests
-swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine -framework AVFoundation Sources/Protocol.swift Sources/EngineInstallation.swift Sources/EmbeddedEngine.swift Sources/RigController.swift Sources/Modem.swift Sources/Beacon.swift Sources/ChatRooms.swift Sources/ChannelAnnouncements.swift Sources/CallsignList.swift Sources/RigTelemetry.swift Tests/Modem73NetworkTests.swift -o build/modem73-network-tests
+swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine -framework AVFoundation Sources/Protocol.swift Sources/EngineInstallation.swift Sources/EmbeddedEngine.swift Sources/RigController.swift Sources/Modem.swift Sources/Ping.swift Sources/Beacon.swift Sources/ChatRooms.swift Sources/ChannelAnnouncements.swift Sources/CallsignList.swift Sources/RigTelemetry.swift Tests/Modem73NetworkTests.swift -o build/modem73-network-tests
 python3 Tests/modem73_simulator.py
 clang++ -std=c++17 -O2 -I vendor/modem73 -I vendor/modem73/deps/aicodix/dsp -I vendor/modem73/deps/aicodix/code -I vendor/modem73/deps/aicodix/modem Tests/dsp_roundtrip.cc -o build/dsp-roundtrip
 build/dsp-roundtrip > build/dsp-test.log 2>&1
@@ -34,3 +34,6 @@ swiftc -swift-version 5 -module-cache-path build/module-cache -framework SwiftUI
 build/chat-layout-tests
 swiftc -swift-version 5 -module-cache-path build/module-cache Sources/RigTelemetry.swift Tests/RigTelemetryTests.swift -o build/rig-telemetry-tests
 build/rig-telemetry-tests
+
+swiftc -swift-version 5 -module-cache-path build/module-cache Sources/Protocol.swift Sources/Ping.swift Tests/PingTests.swift -o build/ping-tests
+build/ping-tests

@@ -10,6 +10,8 @@
 #include <objbase.h>
 #include <shellapi.h>
 // clang-format on
+#include "dashboard.hpp"
+#include "ping.hpp"
 #include "protocol.hpp"
 #include "rig_settings.hpp"
 #include <atomic>
@@ -22,7 +24,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.7 Windows test 3";
+constexpr const wchar_t *VERSION = L"0.4.8 Windows test 4";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -47,7 +49,9 @@ enum ControlID {
   ANNMIN,
   SETFREQ,
   REFRESHRIG,
-  BEACONNOW
+  BEACONNOW,
+  PING,
+  AUTOPING
 };
 enum SettingID {
   CALL = 201,
@@ -69,7 +73,7 @@ enum SettingID {
 HWND win, history, composer, statusLabel, topicLabel, frequencyLabel;
 HANDLE activityProcess = nullptr;
 std::string catFrequency;
-double frequencyTime = 0, lastActivityWrite = 0;
+double frequencyTime = 0, lastActivityWrite = 0, framesTime = 0;
 bool beaconPending = false;
 std::map<int, HWND> controls;
 HFONT font;
@@ -83,8 +87,10 @@ struct Settings {
                                          custom;
   int drive = 25, rigPort = 4532, rigModel = 0, catBaud = 38400;
   std::string catCOM;
+  bool autoPing = false;
 };
 Settings settings;
+PingSession ping;
 std::atomic<bool> running{false}, connected{false};
 std::thread worker;
 std::mutex mutex;
@@ -100,7 +106,8 @@ DWORD rigPID = 0;
 std::vector<RigModel> modelCatalog;
 DWORD enginePID = 0;
 std::string rawStatus, rawConfig, rawFrames, lastError, channelState;
-std::deque<std::string> modemEvents;
+std::deque<std::string> modemEvents, activityHistory;
+std::deque<double> occupancyHistory;
 bool audioReady = false, rigReady = false;
 int queueDepth = 0;
 double statusTime = 0, beaconDue = 0, announcementDue = 0, lastAuto = 0;
@@ -215,6 +222,7 @@ void saveSettings() {
            {"custom", settings.custom},
            {"catCOM", settings.catCOM}})
     cJSON_AddStringToObject(j.p, p.first, p.second.c_str());
+  cJSON_AddBoolToObject(j.p, "autoPing", settings.autoPing);
   cJSON_AddNumberToObject(j.p, "drive", settings.drive);
   cJSON_AddNumberToObject(j.p, "rigPort", settings.rigPort);
   cJSON_AddNumberToObject(j.p, "rigModel", settings.rigModel);
@@ -237,6 +245,7 @@ void loadSettings() {
   std::string s((std::istreambuf_iterator<char>(f)), {});
   try {
     Json j(s);
+    settings.autoPing = j.yes("autoPing");
     settings.call = j.str("call");
     settings.grid = j.str("grid");
     settings.input = j.str("input");
@@ -266,6 +275,7 @@ void loadSettings() {
 }
 void readSettings() {
   Settings s;
+  s.autoPing = settings.autoPing;
   s.call = call(value(CALL));
   s.grid = call(value(GRID));
   s.input = value(RXDEVICE);
@@ -751,6 +761,8 @@ void start() {
   rawConfig.clear();
   rawFrames.clear();
   modemEvents.clear();
+  activityHistory.clear();
+  occupancyHistory.clear();
   setSettingsEnabled(false);
   SetWindowTextW(controls[START], L"Stop Modem");
   worker = std::thread(network);
@@ -794,6 +806,7 @@ void stop() {
   statusTime = 0;
   beaconDue = announcementDue = 0;
   beaconPending = false;
+  ping.pending.clear();
   catFrequency.clear();
   frequencyTime = 0;
   put(frequencyLabel, "CAT: unavailable");
@@ -823,9 +836,13 @@ void showHistory() {
     if (e.room == rooms.selected)
       s +=
           (e.outgoing ? "You -> " : "") + e.source + ": " + e.text + "\r\n\r\n";
-  put(history, s);
-  SendMessageW(history, EM_SETSEL, -1, -1);
-  SendMessageW(history, EM_SCROLLCARET, 0, 0);
+  if (text(history) != s) {
+    put(history, s);
+    int end = GetWindowTextLengthW(history);
+    SendMessageW(history, EM_SETSEL, end, end);
+    SendMessageW(history, EM_SCROLLCARET, 0, 0);
+    SendMessageW(history, WM_VSCROLL, SB_BOTTOM, 0);
+  }
   put(topicLabel, rooms.selected[0] == '#'
                       ? "Topic: " + rooms.topics[rooms.selected]
                   : rooms.selected == "radio"
@@ -1079,10 +1096,40 @@ void automation() {
     if (!sends.empty())
       return;
   }
+  if (settings.autoPing && validGrid(settings.grid)) {
+    auto frames = rawFrames;
+    auto reply = ping.reply(
+        settings.call, settings.grid, now(),
+        [&](const PingSession::Pending &p) -> std::optional<double> {
+          if (frames.empty())
+            return std::nullopt;
+          Json j(frames);
+          cJSON *item;
+          auto list = cJSON_GetObjectItemCaseSensitive(j.p, "frames");
+          cJSON_ArrayForEach(item, list) {
+            auto source = cJSON_GetObjectItemCaseSensitive(item, "callsign"),
+                 id = cJSON_GetObjectItemCaseSensitive(item, "application_id"),
+                 snr = cJSON_GetObjectItemCaseSensitive(item, "snr");
+            auto age = cJSON_GetObjectItemCaseSensitive(item, "age_s");
+            if (cJSON_IsNumber(age) &&
+                std::abs(framesTime - age->valuedouble - p.received) <= 5 &&
+                cJSON_IsString(source) &&
+                call(source->valuestring) == p.source && cJSON_IsString(id) &&
+                p.id == id->valuestring && cJSON_IsNumber(snr))
+              return snr->valuedouble;
+          }
+          return std::nullopt;
+        });
+    if (reply) {
+      enqueue(*reply);
+      lastAuto = now();
+      return;
+    }
+  }
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.7-win-test3"});
+                 " QSO73 v0.4.8-win-test4"});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
     lastAuto = now();
@@ -1107,7 +1154,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 3 - ") +
+  std::string s = std::string("QSO73 Windows test 4 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1150,7 +1197,9 @@ std::string activity() {
       r += '\r';
     r += c;
   }
-  return r;
+  return dashboard(rawStatus, rawConfig, rawFrames, settings.call, catFrequency,
+                   activityHistory, occupancyHistory) +
+         "\r\nFULL DIAGNOSTICS (PgDn to inspect)\r\n" + r;
 }
 void publishActivity() {
   if (!activityProcess)
@@ -1243,6 +1292,13 @@ void pollUI() {
     try {
       if (e.kind == "packet" || e.kind == "sent") {
         bool sent = e.kind == "sent";
+        if (e.packet.text.rfind(PingMessage::prefix, 0) == 0) {
+          auto readable = ping.receive(e.packet, settings.call, sent,
+                                       settings.autoPing, now());
+          if (!readable)
+            continue;
+          e.packet.text = *readable;
+        }
         if (rooms.route(e.packet, settings.call, sent, now()))
           changed = true;
         if (!sent && e.packet.source != settings.call &&
@@ -1255,6 +1311,12 @@ void pollUI() {
         audioReady = j.yes("audio_connected");
         rigReady = j.yes("rigctl_connected");
         channelState = j.str("channel_state");
+        activityHistory.push_back(channelState);
+        occupancyHistory.push_back(j.num("occupancy_pct"));
+        if (activityHistory.size() > 32) {
+          activityHistory.pop_front();
+          occupancyHistory.pop_front();
+        }
         queueDepth = int(j.num("tx_queue"));
         notify("Connected | Audio " +
                std::string(audioReady ? "ready" : "unavailable") + " | " +
@@ -1265,9 +1327,10 @@ void pollUI() {
                (j.yes("rigctl_connected") ? "connected" : "unavailable"));
       } else if (e.kind == "config")
         rawConfig = e.data;
-      else if (e.kind == "frames")
+      else if (e.kind == "frames") {
         rawFrames = e.data;
-      else if (e.kind == "frequency") {
+        framesTime = now();
+      } else if (e.kind == "frequency") {
         catFrequency = e.data;
         frequencyTime = now();
       } else if (e.kind == "event") {
@@ -1322,7 +1385,7 @@ void pollUI() {
     notify(e.what());
     rebuildRooms();
   }
-  for (int id : {SEND, CQ, SNR, CLOSEQSO, CUSTOM, SETFREQ, BEACONNOW})
+  for (int id : {SEND, CQ, SNR, CLOSEQSO, CUSTOM, SETFREQ, BEACONNOW, PING})
     EnableWindow(controls[id],
                  connected && audioReady &&
                      (settings.ptt != "rigctl" || rigReady) &&
@@ -1355,7 +1418,7 @@ void modes() {
 }
 void layout(int w, int h) {
   int left = 300, right = w - left - 15;
-  MoveWindow(history, left, 158, right, h - 335, TRUE);
+  MoveWindow(history, left, 188, right, h - 365, TRUE);
   MoveWindow(composer, left, h - 167, right - 115, 65, TRUE);
   MoveWindow(controls[SEND], w - 120, h - 167, 105, 65, TRUE);
   MoveWindow(statusLabel, left, h - 42, right, 32, TRUE);
@@ -1375,7 +1438,7 @@ void layout(int w, int h) {
 }
 void makeUI() {
   font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-  label(L"QSO73 Windows test 3", 15, 14, 275);
+  label(L"QSO73 Windows test 4", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104);
@@ -1432,6 +1495,12 @@ void makeUI() {
         BS_AUTOCHECKBOX | WS_TABSTOP);
   edit(ANNMIN, 750, 120, 42, "10");
   label(L"min", 798, 124, 32);
+  button(PING, L"PING", 300, 151, 75);
+  child(L"BUTTON", L"Auto PING replies", AUTOPING, 388, 151, 155, 25,
+        BS_AUTOCHECKBOX | WS_TABSTOP);
+  SendMessageW(controls[AUTOPING], BM_SETCHECK,
+               settings.autoPing ? BST_CHECKED : BST_UNCHECKED, 0);
+  label(L"Reply with measured SNR, callsign and saved grid", 555, 155, 430);
   history = child(L"EDIT", L"", 0, 300, 158, 680, 380,
                   ES_MULTILINE | ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL);
   composer = child(L"EDIT", L"", 0, 300, 550, 560, 65,
@@ -1547,6 +1616,24 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
           s += c + "\n";
         s += "\nEnter a callsign in Open / Join for direct chat.";
         MessageBoxW(win, wide(s).c_str(), L"Channel users", MB_OK);
+        break;
+      }
+      case AUTOPING:
+        settings.autoPing =
+            SendMessageW(controls[AUTOPING], BM_GETCHECK, 0, 0) == BST_CHECKED;
+        if (!settings.autoPing)
+          ping.pending.clear();
+        saveSettings();
+        break;
+      case PING: {
+        auto target = rooms.selected == "radio"  ? call(value(TO))
+                      : rooms.selected[0] == '#' ? "QST"
+                                                 : rooms.selected;
+        if (target != "QST" && !station(target))
+          throw std::runtime_error("Select QST or a callsign for PING.");
+        enqueue(
+            {settings.call, target,
+             PingMessage{"request", newID(), "", "", std::nullopt}.encode()});
         break;
       }
       case BEACONNOW:

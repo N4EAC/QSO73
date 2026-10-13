@@ -43,3 +43,8 @@ The headless engine and SwiftUI client compile for macOS 13 on Apple Silicon. Th
 FT-710 USB audio was observed at 44.1 kHz; user testing confirmed transmit audio through the radio. CAT readback confirmed 7.105 MHz. Radio-meter support, over-the-air decoding, older macOS runtime behavior, Intel builds and distribution signing/notarization remain to be verified.
 
 The control API is unauthenticated. Bundled local sockets bind to localhost; external engines need a trusted network or tunnel. A remote radio needs a corresponding audio path or an engine running at that station. Chat is unacknowledged AX.25 UI traffic; reliable sessions, mail, file transfers and automatic logging are outside the current implementation.
+
+
+## QSO73 0.4.8 PING metadata
+
+Both bundled engines include the QSO73 PING request UUID as `application_id` in decoded-frame metadata. The UUID is extracted from the completed AX.25 UI payload, including reassembled packets, alongside the source callsign/SSID. Automatic PING replies match this metadata to the received request before using its SNR. The Windows headless engine also exports audio level, DCD, last CSMA timing, completed TX count and recent TX frame data for the console dashboard. PHY and fragmentation code remain unchanged.

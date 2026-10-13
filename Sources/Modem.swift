@@ -20,6 +20,25 @@ struct RecentModemFrame: Identifiable {
 }
 
 @MainActor final class Modem: ObservableObject {
+    private var ping = PingSession()
+    private var pingDefaults: UserDefaults?
+    @Published var autoPingReply = false { didSet { pingDefaults?.set(autoPingReply, forKey: "qso73.autoPingReply.v1"); if !autoPingReply { ping.clearPending() } } }
+    func sendPing(to target: String) {
+        guard attached, audioConnected else { error = "Connect modem audio before sending PING."; return }
+        let target = PacketAddress.canonical(target)
+        guard target == "QST" || StationSettings.validCallsign(target) else { error = "Select QST or a station callsign for PING."; return }
+        do { send(try PingMessage(k: "request", id: UUID().uuidString).encoded(), to: target) }
+        catch { self.error = error.localizedDescription }
+    }
+    private func sendPingReply() {
+        guard autoPingReply, automaticTransmissionReady else { return }
+        let frames = recentFrames
+        do {
+            if let reply = try ping.reply(own: PacketAddress.canonical(station.callsign), grid: station.locator, now: Date(), snr: { request in
+                frames.first { $0.callsign == request.source && $0.metadata["application_id"] == request.id && abs($0.time.timeIntervalSince(request.received)) <= 5 && $0.metadata["snr"].flatMap(Double.init)?.isFinite == true && $0.snr.isFinite }?.snr
+            }) { send(reply.1, to: reply.0); lastAutomaticSubmission = Date() }
+        } catch { log("PING reply skipped: " + error.localizedDescription); ping.clearPending() }
+    }
     let beacon = BeaconController()
     let rooms: ChatRooms
     let callsigns = CallsignList()
@@ -94,6 +113,7 @@ struct RecentModemFrame: Identifiable {
 
     init(chatDefaults: UserDefaults? = .standard) {
         rooms = ChatRooms(defaults: chatDefaults)
+        pingDefaults = chatDefaults; autoPingReply = chatDefaults?.bool(forKey: "qso73.autoPingReply.v1") ?? false
         beacon.canSend = { [weak self] in
             guard let self else { return false }
             return self.automaticTransmissionReady
@@ -221,6 +241,7 @@ struct RecentModemFrame: Identifiable {
                             while !Task.isCancelled {
                                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                                 guard !Task.isCancelled, let self, self.generation == current else { return }
+                                self.sendPingReply()
                                 if self.pending == nil && self.requests.isEmpty {
                                     self.request(["cmd": "get_status"], purpose: "status")
                                     if self.config.catEnabled {
@@ -272,8 +293,13 @@ struct RecentModemFrame: Identifiable {
             }
         }
     }
-    private func append(_ entry: ChatEntry) {
+    private func append(_ original: ChatEntry) {
+        var entry = original
         do {
+            if entry.text.hasPrefix(PingMessage.prefix) {
+                guard let readable = try ping.receive(entry.text, source: PacketAddress.canonical(entry.source ?? ""), destination: PacketAddress.canonical(entry.destination ?? ""), own: PacketAddress.canonical(station.callsign), outgoing: entry.direction.hasPrefix("You"), enabled: autoPingReply, now: entry.time) else { return }
+                entry.text = readable
+            }
             guard let routed = try rooms.route(entry, local: station.callsign, outgoing: entry.direction.hasPrefix("You")) else { return }
             let other = entry.direction.hasPrefix("You") ? entry.destination : entry.source
             if let other { callsigns.remember(other, excluding: station.callsign) }
@@ -506,6 +532,7 @@ struct RecentModemFrame: Identifiable {
     }
     func detach() {
         channelAnnouncements.stop()
+        ping.clearPending()
         beacon.stop()
         generation = UUID(); timeout?.cancel(); polling?.cancel(); requestTimeout?.cancel()
         timeout = nil; polling = nil; requestTimeout = nil

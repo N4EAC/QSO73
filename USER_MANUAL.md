@@ -2,13 +2,13 @@
 
 ## Amateur-radio chat with modem73
 
-**macOS 0.4.7 / Windows 0.4.7 test 3 | modem73 2.4.2**
+**macOS 0.4.8 / Windows 0.4.8 test 4 | modem73 2.4.2**
 
 Edition: October 13, 2026
 
 QSO73 combines a chat client with a local radio modem. Use it for plain packet chat, shared channels, addressed direct conversations, station beacons and channel invitations.
 
-Chapters 1-13 describe the macOS client in version 0.4.7; the channel walkthrough applies to both clients. See page 16 for Windows test 3 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
+Chapters 1-13 describe the macOS client in version 0.4.8; the channel walkthrough applies to both clients. See page 16 for Windows test 4 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
 
 ### Find what you need
 
@@ -29,6 +29,7 @@ Chapters 1-13 describe the macOS client in version 0.4.7; the channel walkthroug
 | 14 | Shortcuts, saved state and source reference |
 | 15 | IRC-style channel and private-chat walkthrough |
 | 16 | Windows portable testing build: setup and controls |
+| 17 | PING requests, measured replies and user controls |
 
 **Start here:** for an HF chat trial, use ROBUST / RDM-600S with the radio's USB audio input and output selected. This is a suggested starting point, not a guaranteed link setting.
 
@@ -326,7 +327,7 @@ These are two separate functions. Both use the same selected modem transmit mode
 
 Enable **Beacon** in Radio Chat and select **Interval**, or configure it in Station Settings. The selectable range is **1-60 minutes**. A valid 4-, 6- or 8-character Maidenhead grid is required.
 
-Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.7`
+Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.8`
 
 It broadcasts to QST without changing your selected conversation or draft. **Beacon Now** requests a beacon while enabled and connected; a busy modem defers the request. The first automatic beacon follows one full interval after connection or configuration.
 
@@ -465,7 +466,7 @@ Use **Modem events** in Radio Chat when diagnosing startup, device routing or co
 
 ### Basis of this manual
 
-Application behavior was checked against QSO73 0.4.7 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
+Application behavior was checked against QSO73 0.4.8 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
 
 Engine source: https://github.com/RFnexus/modem73/tree/3a37c290a5330bd95f4f283feafc5ba5605bdc52
 
@@ -508,7 +509,7 @@ All rooms share one radio frequency and transmit queue. Private chat is addresse
 
 # 15. Windows portable testing build
 
-The Windows companion is **0.4.7 test 3**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 3 adds a text activity console, Beacon Now and CAT frequency display; these changes still need Windows verification.
+The Windows companion is **0.4.8 test 4**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 4 adds automatic chat scrolling, PING and a compact modem-style dashboard; these changes still need Windows verification.
 
 ### Extract and configure
 
@@ -522,7 +523,7 @@ The Windows companion is **0.4.7 test 3**, for Windows 10 (1903+) or Windows 11 
 
 ### Read activity and frequency
 
-**Modem Activity** opens a separate text console containing status, configuration, recent frames, control events and engine / CAT logs. Use PgUp/PgDn, arrows and Home/End to navigate; Space pauses the display and Q or Esc closes it. Pausing or closing the display keeps the modem and chat operating. Reopen it from the same button.
+**Modem Activity** opens a compact two-column text dashboard with signal level, SNR/BER, CSMA timing, occupancy, activity history, RX/TX statistics, recent frames and CAT frequency. Full configuration, events and engine / CAT logs are available below it. Use PgUp/PgDn, arrows and Home/End to navigate; Space pauses the display and Q or Esc closes it. Pausing or closing the display keeps the modem and chat operating. Reopen it from the same button.
 
 Actual CAT frequency appears beside **Set Frequency**, refreshed about every two seconds outside modem TX. Older data is labelled **(last read)**; failed reads show unavailable. The MHz input field changes the dial only when Set Frequency is clicked. This does not transmit a tuning carrier.
 
@@ -532,4 +533,37 @@ Actual CAT frequency appears beside **Set Frequency**, refreshed about every two
 
 Use Conversation and Open / Join for channels or direct callsigns, Topic... to set a topic, and Users... for recently heard members. In Windows, type a listed callsign into Open / Join to start a direct chat. F1-F4 submit plain Radio Chat packets even while a channel is selected. Export Chat before quitting to keep the session.
 
-The Windows test client has a smaller feature set: no Mac settings-profile import, engine update/rollback interface, activity docking or graphical CAT meter dashboard. Station settings and joined channel names persist in settings.json; conversations and drafts are session-only. Keep settings.json when replacing an existing portable build's application files.
+The Windows client omits Mac profile import, engine updates, docking and graphical CAT meters. Settings and joined names persist in settings.json; chat and drafts are session-only. Preserve settings.json when updating.
+
+<!-- page -->
+
+# 16. PING and automatic signal reports
+
+PING checks whether an updated QSO73 station can decode your request and send a reply. The reply contains the responding station's **callsign**, **saved grid** and the **measured SNR of your received request**. This SNR describes reception at that station, rather than the strength of its reply at your radio.
+
+### Send a PING
+
+1. Use **QSO73 0.4.8 on macOS** or **Windows 0.4.8 test 4** at both ends, with their current bundled engines. Older clients do not implement this PING protocol. Independently installed engines need the decoded-frame application_id metadata used to associate each request with its own SNR.
+2. Configure your callsign, grid, radio audio and PTT; start the modem and confirm audio is ready. The receiving station also needs a valid saved Maidenhead grid to reply.
+3. In Radio Chat, choose the other callsign in **To** and click **PING**. QST requests replies from listening QSO73 stations. If a direct conversation is selected, PING targets that station; from a channel, it uses QST. PING is shown in Radio Chat rather than as a channel message.
+4. Look for a **PING reply** in Radio Chat. It shows the responding callsign/grid and request SNR in dB. A local request entry confirms submission, not radio reception or delivery.
+
+### Enable or disable automatic replies
+
+**Auto PING replies** is a checkbox in the chat controls on both platforms. It is **off by default**, and the selection is saved. Enable it at stations that should answer requests automatically. Clearing it cancels waiting replies and prevents future automatic replies; packets already submitted to the modem cannot be withdrawn.
+
+A station can send requests while its own automatic replies are disabled. With QST, several enabled stations may answer, sharing the same radio channel and carrier sensing. Use an individual callsign for a focused link check.
+
+### Reply timing and measured data
+
+Replies wait for ready audio, idle modem status and an empty transmit queue. They share the automatic-traffic spacing used by beacons and channel invitations. A request waits at least two seconds so its decoded-frame metadata can arrive. Waiting replies expire after thirty seconds. Disconnecting the modem cancels them.
+
+The client matches the source callsign and unique request ID to that request's decoded-frame SNR. It does not substitute an older signal report or invent zero when a measurement is missing. Without matching metadata or a valid grid, no automatic reply is sent.
+
+Duplicate requests are ignored. Each source can receive at most one automatic reply per thirty seconds, and replies never trigger another reply. Requests are not repeated automatically. If retrying, allow the reply interval to expire first.
+
+### If no reply arrives
+
+Check that the other operator uses the updated client and bundled engine, has enabled Auto PING replies and saved a valid grid. Confirm matching frequency, usable radio audio and working PTT. A busy channel, missed request, missing measurement or lost reply can prevent an answer. PING does not provide delivery guarantees or a connected session.
+
+PING uses ordinary AX.25 UI packets with QSO73 application data. Callsigns and grids are readable over the air. Keep the reply option off when you do not want automatic transmissions.

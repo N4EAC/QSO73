@@ -19,3 +19,9 @@ windows/build/rig-settings-tests windows/build/hamlib-models-test.txt
 
 clang++ -std=c++17 -O2 -Iwindows/src windows/tests/activity_text_test.cpp -o windows/build/activity-text-tests
 windows/build/activity-text-tests
+
+clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/tests/ping_test.cpp windows/build/cJSON-native.o -o windows/build/ping-tests
+windows/build/ping-tests windows/build/ping-windows.txt
+swiftc -swift-version 5 -module-cache-path build/module-cache Sources/Protocol.swift Sources/Ping.swift Tests/PingTests.swift -o build/ping-tests
+build/ping-tests windows/build/ping-windows.txt windows/build/ping-mac.txt
+windows/build/ping-tests verify windows/build/ping-mac.txt

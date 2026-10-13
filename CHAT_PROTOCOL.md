@@ -93,3 +93,17 @@ submission spacing. There is no catch-up burst after sleep. Disconnecting pauses
 announcements; reconnecting waits a full interval. Leaving removes that channel's
 announcement settings. Announcement settings are session-only and start off
 when the application restarts.
+
+
+## PING · QSO73 0.4.8 / Windows test 4
+
+Plain AX.25 UI payloads use the distinct `~Q73P:` prefix with a JSON object:
+
+```json
+{"v":1,"k":"request","id":"<UUID>"}
+{"v":1,"k":"reply","id":"<same UUID>","call":"K1ABC","grid":"FN31","snr":-14.3}
+```
+
+Requests target a callsign or QST; replies are addressed to the requester. The reply callsign must equal the AX.25 source. Only replies matching a locally submitted request within three minutes are displayed. Request/reply IDs and sender/event combinations suppress duplicates using a bounded 512-entry cache. Automatic replies are opt-in and persist as a user preference. They never respond to replies or own requests. No ARQ, authenticated identity or delivery guarantee is added.
+
+The bundled engines expose `application_id` in decoded-frame metadata. An automatic reply requires matching source, ID and a frame timestamp within five seconds of request reception. Replies wait at least two seconds for metadata, expire after thirty seconds, and are limited to one per source per thirty seconds. They share the idle/empty-queue and five-second spacing rules for automatic traffic. Pending replies are cancelled on disconnect or disabling the option. Older clients and engines lack this feature.

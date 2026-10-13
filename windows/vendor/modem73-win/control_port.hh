@@ -42,6 +42,7 @@ inline void add_rx_frame_fields(cJSON* j, const RxFrameInfo& f) {
     }
     cJSON_AddStringToObject(j, "callsign", f.callsign.c_str());
     cJSON_AddStringToObject(j, "callsign_source", f.callsign_source.c_str());
+    cJSON_AddStringToObject(j, "application_id", f.application_id.c_str());
 }
 
 // Base64 decode (RFC 4648)

@@ -70,7 +70,15 @@ int wmain(int argc, wchar_t **argv) {
           FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY);
     for (int i = 0; i < rows && top + i < int(content.size()); i++)
       write(i + 1, content[top + i],
-            FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+            content[top + i].find(L"sending") != std::wstring::npos
+                ? FOREGROUND_RED | FOREGROUND_INTENSITY
+            : content[top + i].find(L"RX ") != std::wstring::npos
+                ? FOREGROUND_GREEN | FOREGROUND_INTENSITY
+            : content[top + i].find(L"SIGNAL") != std::wstring::npos ||
+                    content[top + i].find(L"CSMA") != std::wstring::npos ||
+                    content[top + i].find(L"RADIO") != std::wstring::npos
+                ? FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY
+                : FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
     write(height - 1,
           (paused ? L"PAUSED" : L"LIVE") + std::wstring(L" | lines ") +
               std::to_wstring(top + 1) + L"-" +

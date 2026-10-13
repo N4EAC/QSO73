@@ -23,6 +23,7 @@ struct RxFrameInfo {
     int mfsk_mode = -1;
     std::string callsign;
     std::string callsign_source = "none";
+    std::string application_id;
 };
 
 // QSO73's two-address AX.25 UI frames carry the source callsign and SSID.

@@ -1,4 +1,4 @@
-# QSO73 Windows test 3 — validation
+# QSO73 Windows test 4 — validation
 
 Validated on macOS with the installed x86_64-w64-mingw32 cross-compiler.
 
@@ -14,6 +14,9 @@ Validated on macOS with the installed x86_64-w64-mingw32 cross-compiler.
 
 - Hamlib Windows/source archives match the official published SHA-256 values. Radio catalog parsing, exact model/COM/baud arguments, CAT PTT selection local binding and CAT frequency-response readiness checks have native C++ tests.
 
-Tester feedback for Windows test 2 confirms radio connection and over-the-air message transmission. New test 3 activity console, Beacon Now and live CAT frequency display still need Windows hardware verification. Windows audio levels, graceful shutdown and two-radio conversations have not been independently verified here. Follow START-HERE.md / README.md for the first hardware test.
+Tester feedback for Windows test 2 confirms radio connection and over-the-air message transmission. New test 4 activity console, Beacon Now and live CAT frequency display still need Windows hardware verification. Windows audio levels, graceful shutdown and two-radio conversations have not been independently verified here. Follow START-HERE.md / README.md for the first hardware test.
 
 Reproduce the Mac-side compatibility/DSP checks from the full QSO73 workspace with `windows/test-mac-interop.sh`. The Windows builder source ZIP includes the C++ tests; compile them in MinGW64 against the included cJSON source to run them on Windows.
+
+
+Test 4 adds PING on both platforms and fixes Windows end-of-transcript scrolling. PING request/reply fixtures pass in both directions between C++ and Swift; tests cover opt-in behavior, missing measurements, duplicate suppression, no reply loops, per-source rate limiting and cancellation. The dashboard has a tested 21-row summary with numeric live-data and unavailable-data handling. Windows engine instrumentation supplies actual TX completion counters/history, audio level, DCD and last CSMA window/quiet values. Hardware verification remains outstanding for the new controls.

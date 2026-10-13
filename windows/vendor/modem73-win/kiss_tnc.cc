@@ -837,6 +837,7 @@ private:
                                      pkt.enqueue_ms - rx_ms <= 5000 &&
                                      steady_now_ms() - rx_ms <= 8000;
                     CsmaGate gate(gcfg, (uint32_t)gen());
+                    telemetry_window_ms_=gate.window_ms();telemetry_quiet_ms_=gate.quiet_needed_ms();
 #ifdef WITH_UI
                     if (g_ui_state) g_ui_state->csma_window_ms = gate.window_ms();
 #endif
@@ -973,6 +974,12 @@ private:
 #endif
                     bool sent = transmit(cur.data, cur.oper_mode, first, !have_next,
                                          cur.beacon);
+                    if(sent&&!cur.beacon) {
+                        RxFrameInfo record;record.seq=++telemetry_tx_count_;record.size=cur.data.size();
+                        record.steady_ms=steady_now_ms();record.time=std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+                        auto cfg=get_config();record.mode=cfg.modem_type==2?ROBUST_MODE_NAMES[cfg.robust_mode]:cfg.modem_type==1?MFSK_MODE_NAMES[cfg.mfsk_mode]:cfg.modulation;
+                        std::lock_guard<std::mutex> lock(tx_history_mutex_);tx_history_.push_front(record);if(tx_history_.size()>8)tx_history_.pop_back();
+                    }
                     if (!have_next) {
                         if (!cur.beacon)
                             last_burst_end = steady_now_ms();
@@ -1418,6 +1425,14 @@ private:
             if (auto source = ax25_ui_source(payload); !source.empty()) {
                 info.callsign = source;
                 info.callsign_source = "ax25";
+                if (payload.size()>22 && std::string(payload.begin()+16,payload.begin()+22)=="~Q73P:") {
+                    std::string body(payload.begin()+22,payload.end());
+                    if(cJSON* ping=cJSON_Parse(body.c_str())) {
+                        cJSON* id=cJSON_GetObjectItemCaseSensitive(ping,"id");
+                        if(cJSON_IsString(id))info.application_id=id->valuestring;
+                        cJSON_Delete(ping);
+                    }
+                }
             }
             {
                 std::lock_guard<std::mutex> lock(rx_history_mutex_);
@@ -1709,7 +1724,7 @@ private:
 
                 if (blanking) {
                     was_blanking = true;
-                    dcd_active_ = false;
+                    dcd_active_ = false;telemetry_dcd_=false;
                 } else {
                     if (decoder_reconfig_pending_.exchange(false)) {
                         int cf;
@@ -1822,6 +1837,7 @@ private:
                                     robust_decoder_n_->carrier_active())) ||
                                   (sync_only &&
                                    tnow < tone_hold_until_ms_);
+                    telemetry_dcd_=dcd_active_;
                     if (dcd_active_) {
                         if (tnow - last_dcd_ms_ > 1500 &&
                             tnow - last_id_ms_ > 2500 &&
@@ -2299,6 +2315,11 @@ private:
     // TX blanking
     std::atomic<bool> tx_blanking_active_{false};
     std::atomic<bool> tx_on_air_{false};
+    std::atomic<uint64_t> telemetry_tx_count_{0};
+    std::mutex tx_history_mutex_;
+    std::deque<RxFrameInfo> tx_history_;
+    std::atomic<int> telemetry_window_ms_{0}, telemetry_quiet_ms_{0};
+    std::atomic<bool> telemetry_dcd_{false};
     
 public:
     float alc_auto_tune() {
@@ -2688,6 +2709,11 @@ public:
         return false;
     }
     
+    std::vector<RxFrameInfo> tx_frame_history() {std::lock_guard<std::mutex> lock(tx_history_mutex_);return {tx_history_.begin(),tx_history_.end()};}
+    uint64_t tx_frame_count() const { return telemetry_tx_count_.load(); }
+    int csma_window_ms() const { return telemetry_window_ms_.load(); }
+    int csma_quiet_ms() const { return telemetry_quiet_ms_.load(); }
+    bool dcd_state() const { return telemetry_dcd_.load(); }
     float get_audio_level() {
         if (!audio_ || !audio_->capture_alive()) return -100.0f;
         return audio_->instant_level_db(100);
@@ -3969,7 +3995,11 @@ int main(int argc, char** argv) {
                 cJSON_AddBoolToObject(j, "ptt_on", tnc.is_transmitting());
                 cJSON_AddNumberToObject(j, "tx_queue", (double)tnc.tx_queue_depth());
                 cJSON_AddNumberToObject(j, "rx_frame_count", stats.sync_count - stats.preamble_errors - stats.crc_errors);
-                cJSON_AddNumberToObject(j, "tx_frame_count", 0); // TODO: add tx counter to KISSTNC
+                cJSON_AddNumberToObject(j, "tx_frame_count", tnc.tx_frame_count());
+                if(tnc.is_audio_healthy())cJSON_AddNumberToObject(j,"rx_audio_level_db",tnc.get_audio_level());
+                cJSON_AddBoolToObject(j,"dcd_active",tnc.dcd_state());
+                cJSON_AddNumberToObject(j,"csma_window_ms",tnc.csma_window_ms());
+                cJSON_AddNumberToObject(j,"csma_quiet_ms",tnc.csma_quiet_ms());
                 cJSON_AddNumberToObject(j, "rx_error_count", stats.preamble_errors + stats.crc_errors);
                 cJSON_AddNumberToObject(j, "sync_count", stats.sync_count);
                 cJSON_AddNumberToObject(j, "preamble_errors", stats.preamble_errors);
@@ -3982,6 +4012,9 @@ int main(int argc, char** argv) {
                 cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
                 cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
                 cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
+                auto tx_history=cJSON_AddArrayToObject(j,"tx_history");
+                auto tick=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                for(const auto& record:tnc.tx_frame_history()) {auto item=cJSON_CreateObject();cJSON_AddNumberToObject(item,"time",record.time);cJSON_AddNumberToObject(item,"age_s",double(tick-record.steady_ms)/1000);cJSON_AddNumberToObject(item,"size",record.size);cJSON_AddStringToObject(item,"mode",record.mode.c_str());cJSON_AddItemToArray(tx_history,item);}
                 cJSON_AddNumberToObject(j, "population", tnc.channel_population());
                 cJSON_AddNumberToObject(j, "occupancy_pct", tnc.channel_occupancy());
 

@@ -2,7 +2,7 @@
 
 The Windows modem engine is based on RFnexus/modem73-win commit ed2a06b21ae2f2eef57e75dcf65013c298da7d6f (2.4.2): https://github.com/RFnexus/modem73-win
 
-QSO73 modifications add SIGBREAK shutdown handling, AX.25 sender metadata and UTF-8 process manifests. Original notices are preserved in windows/vendor/modem73-win. This source distribution contains all engine dependencies needed by the Windows builder.
+QSO73 modifications add SIGBREAK shutdown handling, AX.25 sender/PING request metadata, headless activity telemetry and UTF-8 process manifests. Original notices are preserved in windows/vendor/modem73-win. This source distribution contains all engine dependencies needed by the Windows builder.
 
 - modem73-win: Unlicense, in licenses/modem73-win.txt.
 - aicodix DSP/code/modem: corresponding original licenses in licenses/aicodix-*.txt.

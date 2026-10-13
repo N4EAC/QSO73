@@ -1,7 +1,7 @@
 # QSO73
 
-[![macOS](https://img.shields.io/badge/macOS-13%2B%20%C2%B7%20Apple%20Silicon-007AFF?logo=apple&logoColor=white)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.7)
-[![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64%20%C2%B7%20TESTING-orange)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.7-windows-test3)
+[![macOS](https://img.shields.io/badge/macOS-13%2B%20%C2%B7%20Apple%20Silicon-007AFF?logo=apple&logoColor=white)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.8)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64%20%C2%B7%20TESTING-orange)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.8-windows-test4)
 [![Modem](https://img.shields.io/badge/modem73-2.4.2-008C95)](https://github.com/RFnexus/modem73)
 
 QSO73 is an amateur-radio chat client using modem73 for HF, VHF and UHF packet communication. It offers QST broadcasts, addressed chat, shared channels with topics and heard-user lists, direct conversations, signal reports and optional beacons. Channels and direct conversations use QSO73's own radio protocol; no Internet connection or central chat server is needed.
@@ -12,14 +12,14 @@ Source, documentation and release downloads are publicly available in this repos
 
 | Platform | Version | Package | Status |
 | --- | --- | --- | --- |
-| macOS 13+, Apple Silicon | 0.4.7 | [macOS DMG](https://github.com/N4EAC/QSO73/releases/download/v0.4.7/QSO73-0.4.7-macOS-arm64.dmg) | Development build |
-| Windows 10 (1903+) / Windows 11, x64 | 0.4.7 test 3 | [Portable Windows ZIP](https://github.com/N4EAC/QSO73/releases/download/v0.4.7-windows-test3/QSO73-0.4.7-windows-x64-test3.zip) | **Testing / prerelease** |
+| macOS 13+, Apple Silicon | 0.4.8 | [macOS DMG](https://github.com/N4EAC/QSO73/releases/download/v0.4.8/QSO73-0.4.8-macOS-arm64.dmg) | Development build |
+| Windows 10 (1903+) / Windows 11, x64 | 0.4.8 test 4 | [Portable Windows ZIP](https://github.com/N4EAC/QSO73/releases/download/v0.4.8-windows-test4/QSO73-0.4.8-windows-x64-test4.zip) | **Testing / prerelease** |
 
 Use the platform-specific releases above. Windows remains a testing build with a smaller feature set. The macOS app targets Apple Silicon; an Intel Mac build is not supplied.
 
 ## User manual
 
-Read the current [user manual (PDF)](docs/QSO73-User-Manual.pdf) or [editable manual](USER_MANUAL.md). It covers radio/audio setup, modem families and modes, channel creation and discovery, topics, user lists, direct conversations, macros, beacons and activity displays. Page 16 covers the Windows portable testing build.
+Read the current [user manual (PDF)](docs/QSO73-User-Manual.pdf) or [editable manual](USER_MANUAL.md). It covers radio/audio setup, modem families and modes, channel creation and discovery, topics, user lists, direct conversations, macros, beacons and activity displays. Page 17 covers PING requests and measured automatic replies; page 16 covers the Windows portable testing build.
 
 The PDF is also included in the macOS DMG and Windows portable ZIP. See the [Windows setup guide](windows/README.md) for its detailed test procedure and controls.
 
@@ -39,9 +39,9 @@ The macOS app is ad-hoc signed and is not notarized. The modem processes at 48 k
 3. With rigctl PTT selected, choose the radio model, CAT COM port and matching baud. **Hamlib 4.7.2 is bundled**; no separate installation, terminal command or PATH change is needed.
 4. Save settings and start the modem. QSO73 starts its bundled rigctld, checks a frequency read and starts modem73. Stop Modem releases PTT and closes its processes.
 
-Test 3 includes a separate text-console activity display, **Beacon Now** and actual CAT frequency readback. In the activity console, use PgUp/PgDn or arrows to navigate, Space to pause the display and Q/Esc to close it. Closing the display keeps the modem and chat running.
+Test 4 includes a separate text-console activity display, **Beacon Now** and actual CAT frequency readback. In the activity console, use PgUp/PgDn or arrows to navigate, Space to pause the display and Q/Esc to close it. Closing the display keeps the modem and chat running.
 
-A tester reported successful radio connection and over-the-air transmission with Windows test 2. The new test 3 controls still need Windows hardware verification. See the [validation report](windows/TEST_RESULTS.md).
+A tester reported successful radio connection and over-the-air transmission with Windows test 2. The new test 4 controls still need Windows hardware verification. See the [validation report](windows/TEST_RESULTS.md).
 
 ## Conversations and airtime
 
@@ -77,3 +77,10 @@ For Windows, install MSYS2 MinGW64 build tools, then run **windows/Build-Windows
 Local checks include packet interoperability in both directions between the C++ Windows and Swift macOS implementations, real DSP round trips and Windows package dependency checks. These do not replace radio hardware and station-to-station testing.
 
 Third-party source and notices are preserved. See [macOS notices](THIRD_PARTY_NOTICES.md) and [Windows notices](windows/THIRD_PARTY_NOTICES.md). The Windows package includes the corresponding Hamlib and libusb source archives.
+
+
+## PING and Windows activity updates
+
+Both platforms now have a PING button and saved Auto PING replies option (off by default). PING targets To in Radio Chat, the selected direct callsign, or QST from a channel. Automatic replies provide the responder's callsign, grid and measured SNR of the specific request. Both operators need these updated builds and current bundled engines. No matching measurement means no reply. Replies wait for idle/empty-queue conditions, are rate limited, and cannot create reply loops.
+
+Windows test 4 explicitly scrolls new conversation messages to the end and opens a compact modem-style activity dashboard showing signal/SNR/BER, CSMA timing, occupancy and activity histories, real RX/TX statistics, recent frames and CAT frequency. Full raw diagnostics and logs remain available below the summary.
