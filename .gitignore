@@ -1,0 +1,11 @@
+build/
+output/
+tmp/
+.DS_Store
+__pycache__/
+*.pyc
+*.o
+*.exe
+windows/build/
+windows/dist/
+vendor/modem73/modem73

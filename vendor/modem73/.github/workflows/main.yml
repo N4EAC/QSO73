@@ -1,0 +1,768 @@
+name: Build packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.1.0). A tag v<version> will be created.'
+        required: true
+        default: '0.0.0-dev'
+      publish:
+        description: 'Publish a GitHub Release for this version'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  prep:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - id: ver
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="${{ github.event.inputs.version }}"
+          fi
+          V="$(printf '%s' "$V" | tr '-' '+')"
+          case "$V" in
+            [0-9]*) ;;
+            *) V="0.0.0+$V" ;;
+          esac
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+          echo "Building version ${V}"
+
+  build-deb:
+    needs: prep
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ubuntu-24.04
+            container: ubuntu:24.04
+            codename: noble
+            family: ubuntu
+            arch: amd64
+            runner: ubuntu-24.04
+            arch_flags: "-march=x86-64-v2"
+            cross_triple: ""
+          - id: ubuntu-24.04
+            container: ubuntu:24.04
+            codename: noble
+            family: ubuntu
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            arch_flags: "-march=armv8-a"
+            cross_triple: ""
+          - id: ubuntu-24.04
+            container: ubuntu:24.04
+            codename: noble
+            family: ubuntu
+            arch: armhf
+            runner: ubuntu-24.04
+            arch_flags: "-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+            cross_triple: arm-linux-gnueabihf
+          - id: ubuntu-22.04
+            container: ubuntu:22.04
+            codename: jammy
+            family: ubuntu
+            arch: amd64
+            runner: ubuntu-24.04
+            arch_flags: "-march=x86-64-v2"
+            cross_triple: ""
+          - id: ubuntu-22.04
+            container: ubuntu:22.04
+            codename: jammy
+            family: ubuntu
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            arch_flags: "-march=armv8-a"
+            cross_triple: ""
+          - id: ubuntu-22.04
+            container: ubuntu:22.04
+            codename: jammy
+            family: ubuntu
+            arch: armhf
+            runner: ubuntu-24.04
+            arch_flags: "-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+            cross_triple: arm-linux-gnueabihf
+          - id: debian-12
+            container: debian:12
+            codename: bookworm
+            family: debian
+            arch: amd64
+            runner: ubuntu-24.04
+            arch_flags: "-march=x86-64-v2"
+            cross_triple: ""
+          - id: debian-12
+            container: debian:12
+            codename: bookworm
+            family: debian
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            arch_flags: "-march=armv8-a"
+            cross_triple: ""
+          - id: debian-12
+            container: debian:12
+            codename: bookworm
+            family: debian
+            arch: armhf
+            runner: ubuntu-24.04
+            arch_flags: "-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+            cross_triple: arm-linux-gnueabihf
+          - id: debian-13
+            container: debian:13
+            codename: trixie
+            family: debian
+            arch: amd64
+            runner: ubuntu-24.04
+            arch_flags: "-march=x86-64-v2"
+            cross_triple: ""
+          - id: debian-13
+            container: debian:13
+            codename: trixie
+            family: debian
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            arch_flags: "-march=armv8-a"
+            cross_triple: ""
+          - id: debian-13
+            container: debian:13
+            codename: trixie
+            family: debian
+            arch: armhf
+            runner: ubuntu-24.04
+            arch_flags: "-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+            cross_triple: arm-linux-gnueabihf
+          - id: linuxmint-22
+            container: linuxmintd/mint22-amd64
+            codename: wilma
+            family: ubuntu
+            arch: amd64
+            runner: ubuntu-24.04
+            arch_flags: "-march=x86-64-v2"
+            cross_triple: ""
+          - id: armbian-x6100
+            container: debian:12
+            codename: bookworm
+            family: debian
+            arch: armhf
+            runner: ubuntu-24.04
+            arch_flags: "-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard"
+            cross_triple: arm-linux-gnueabihf
+
+    steps:
+      - name: Bootstrap container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates
+
+      - name: Checkout modem73
+        uses: actions/checkout@v7
+        with:
+          path: m73
+
+      - name: Enable armhf
+        if: matrix.cross_triple
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          if [ "${{ matrix.family }}" = "ubuntu" ]; then
+            if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+              sed -i 's|^Signed-By:|Architectures: amd64\nSigned-By:|' /etc/apt/sources.list.d/ubuntu.sources
+            fi
+            if [ -f /etc/apt/sources.list ]; then
+              sed -i 's|^deb http|deb [arch=amd64] http|g; s|^deb https|deb [arch=amd64] https|g' /etc/apt/sources.list
+            fi
+            cat > /etc/apt/sources.list.d/armhf-ports.list <<EOF
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports/ ${{ matrix.codename }} main restricted universe multiverse
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports/ ${{ matrix.codename }}-updates main restricted universe multiverse
+          deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports/ ${{ matrix.codename }}-security main restricted universe multiverse
+          EOF
+          fi
+          dpkg --add-architecture armhf
+          apt-get update
+
+      - name: Install build dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          BASE="make pkg-config file ca-certificates ruby ruby-dev"
+          if [ -n "${{ matrix.cross_triple }}" ]; then
+            apt-get install -y --no-install-recommends $BASE build-essential \
+              crossbuild-essential-${{ matrix.arch }} \
+              libncurses-dev:${{ matrix.arch }} libtinfo-dev:${{ matrix.arch }} libhidapi-dev:${{ matrix.arch }} libhamlib-dev:${{ matrix.arch }}
+          else
+            apt-get install -y --no-install-recommends $BASE build-essential g++ \
+              libncurses-dev libhidapi-dev libhamlib-dev
+          fi
+          gem install --no-document fpm
+          command -v fpm || { echo "::error::fpm not on PATH after gem install"; exit 1; }
+
+      - name: Build
+        working-directory: m73
+        env:
+          CROSS_TRIPLE: ${{ matrix.cross_triple }}
+        run: |
+          CC=gcc
+          CXX=g++
+          if [ -n "$CROSS_TRIPLE" ]; then
+            CC="${CROSS_TRIPLE}-gcc"
+            CXX="${CROSS_TRIPLE}-g++"
+            export PKG_CONFIG_PATH="/usr/lib/${CROSS_TRIPLE}/pkgconfig"
+            export PKG_CONFIG_LIBDIR="/usr/lib/${CROSS_TRIPLE}/pkgconfig:/usr/share/pkgconfig"
+          fi
+          make -f packaging/Makefile.pkg \
+               CC="$CC" CXX="$CXX" \
+               ARCH_FLAGS="${{ matrix.arch_flags }}" \
+               VERSION="${{ needs.prep.outputs.version }}" \
+               -j"$(nproc)"
+
+      - name: Verify CM108 support is compiled in
+        working-directory: m73
+        run: |
+          readelf -d modem73 | grep -q hidapi || {
+            echo "::error::binary is not linked against hidapi - CM108 PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Verify Hamlib support is compiled in
+        working-directory: m73
+        run: |
+          readelf -d modem73 | grep -q hamlib || {
+            echo "::error::binary is not linked against hamlib !!! Hamlib PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Stage install tree
+        working-directory: m73
+        env:
+          CROSS_TRIPLE: ${{ matrix.cross_triple }}
+        run: |
+          if [ -n "$CROSS_TRIPLE" ]; then
+            export PKG_CONFIG_PATH="/usr/lib/${CROSS_TRIPLE}/pkgconfig"
+            export PKG_CONFIG_LIBDIR="/usr/lib/${CROSS_TRIPLE}/pkgconfig:/usr/share/pkgconfig"
+          fi
+          make -f packaging/Makefile.pkg install DESTDIR=../staging PREFIX=/usr
+
+      - name: Build .deb
+        working-directory: m73
+        run: |
+          HIDAPI_DEP=""
+          if [ -f ../staging/usr/lib/udev/rules.d/50-cm108-ptt.rules ]; then
+            HIDAPI_DEP="-d libhidapi-hidraw0"
+          fi
+          fpm -s dir -t deb \
+            -n modem73 \
+            -v "${{ needs.prep.outputs.version }}" \
+            -a "${{ matrix.arch }}" \
+            --description "KISS TNC frontend for the aicodix OFDM modem." \
+            --url "https://github.com/${{ github.repository }}" \
+            --license "see LICENSE" \
+            --maintainer "modem73 maintainers" \
+            -d libc6 \
+            -d 'libstdc++6' \
+            -d 'libncurses6 | libncurses6t64' \
+            -d 'libtinfo6 | libtinfo6t64' \
+            -d 'libhamlib4 | libhamlib4t64' \
+            $HIDAPI_DEP \
+            --deb-no-default-config-files \
+            -C ../staging \
+            -p "../modem73_${{ needs.prep.outputs.version }}_${{ matrix.id }}_${{ matrix.arch }}.deb" \
+            usr
+
+      - name: Checksums
+        run: |
+          for f in modem73_*.deb; do
+            sha256sum "$f" | tee "${f}.sha256"
+            sha512sum "$f" | tee "${f}.sha512"
+          done
+
+      - name: Smoke test
+        if: '!matrix.cross_triple'
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          DEB="$(ls modem73_*.deb)"
+          apt-get install -y "./$DEB"
+          command -v modem73
+          dpkg -L modem73 | head -30
+          timeout 10 modem73 --help >/dev/null 2>&1 || true
+
+      - name: Inspect package
+        if: matrix.cross_triple
+        run: |
+          DEB="$(ls modem73_*.deb)"
+          dpkg-deb --info "$DEB"
+          dpkg-deb --contents "$DEB"
+          dpkg-deb --fsys-tarfile "$DEB" | tar -xO ./usr/bin/modem73 | file -
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-deb-${{ matrix.id }}-${{ matrix.arch }}
+          path: |
+            modem73_*.deb
+            modem73_*.deb.sha256
+            modem73_*.deb.sha512
+
+  build-rpm:
+    needs: prep
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: fedora-43
+            container: fedora:43
+            family: fedora
+            arch: x86_64
+            runner: ubuntu-24.04
+            arch_flags: "-march=x86-64-v2"
+            cc: gcc
+            cxx: g++
+            dep_ncurses: ncurses-libs
+            dep_cxx: libstdc++
+            dep_hidapi: hidapi
+            dep_hamlib: hamlib
+          - id: fedora-43
+            container: fedora:43
+            family: fedora
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            arch_flags: "-march=armv8-a"
+            cc: gcc
+            cxx: g++
+            dep_ncurses: ncurses-libs
+            dep_cxx: libstdc++
+            dep_hidapi: hidapi
+            dep_hamlib: hamlib
+          - id: fedora-44
+            container: fedora:44
+            family: fedora
+            arch: x86_64
+            runner: ubuntu-24.04
+            arch_flags: "-march=x86-64-v2"
+            cc: gcc
+            cxx: g++
+            dep_ncurses: ncurses-libs
+            dep_cxx: libstdc++
+            dep_hidapi: hidapi
+            dep_hamlib: hamlib
+          - id: fedora-44
+            container: fedora:44
+            family: fedora
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            arch_flags: "-march=armv8-a"
+            cc: gcc
+            cxx: g++
+            dep_ncurses: ncurses-libs
+            dep_cxx: libstdc++
+            dep_hidapi: hidapi
+            dep_hamlib: hamlib
+          - id: opensuse-leap-16.0
+            container: opensuse/leap:16.0
+            family: suse
+            arch: x86_64
+            runner: ubuntu-24.04
+            arch_flags: "-march=x86-64-v2"
+            cc: gcc
+            cxx: g++
+            dep_ncurses: libncurses6
+            dep_cxx: libstdc++6
+            dep_hidapi: libhidapi-hidraw0
+            dep_hamlib: libhamlib4
+          - id: opensuse-leap-16.0
+            container: opensuse/leap:16.0
+            family: suse
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            arch_flags: "-march=armv8-a"
+            cc: gcc
+            cxx: g++
+            dep_ncurses: libncurses6
+            dep_cxx: libstdc++6
+            dep_hidapi: libhidapi-hidraw0
+            dep_hamlib: libhamlib4
+
+    steps:
+      - name: Bootstrap container
+        run: |
+          if [ "${{ matrix.family }}" = "fedora" ]; then
+            dnf -y install git ca-certificates tar gzip
+          else
+            zypper -n install git ca-certificates tar gzip
+          fi
+
+      - name: Checkout modem73
+        uses: actions/checkout@v7
+        with:
+          path: m73
+
+      - name: Install build dependencies
+        run: |
+          if [ "${{ matrix.family }}" = "fedora" ]; then
+            dnf -y install gcc gcc-c++ make pkgconf-pkg-config ncurses-devel \
+              rpm-build redhat-rpm-config ruby ruby-devel hidapi-devel hamlib-devel
+          else
+            zypper -n --gpg-auto-import-keys refresh || true
+            zypper -n install \
+              gcc gcc-c++ make pkgconf-pkg-config ncurses-devel \
+              rpm-build ruby ruby-devel libhidapi-devel hamlib-devel
+          fi
+          gem install --no-document --no-user-install --no-format-executable --bindir /usr/bin fpm
+          if ! command -v fpm >/dev/null; then
+            FOUND="$(ls /usr/bin/fpm* "$(gem environment gemdir)"/bin/fpm* 2>/dev/null | head -1)"
+            if [ -n "$FOUND" ]; then
+              ln -sf "$FOUND" /usr/bin/fpm
+            else
+              printf '#!/bin/sh\nexec ruby -rrubygems -e '"'"'load Gem.activate_bin_path("fpm", "fpm", ">= 0")'"'"' -- "$@"\n' > /usr/bin/fpm
+              chmod +x /usr/bin/fpm
+            fi
+          fi
+          command -v fpm || { echo "::error::fpm not on PATH after gem install"; exit 1; }
+          fpm --version
+
+      - name: Build
+        working-directory: m73
+        run: |
+          make -f packaging/Makefile.pkg \
+               CC="${{ matrix.cc }}" CXX="${{ matrix.cxx }}" \
+               ARCH_FLAGS="${{ matrix.arch_flags }}" \
+               VERSION="${{ needs.prep.outputs.version }}" \
+               -j"$(nproc)"
+
+      - name: Verify CM108 support is compiled in
+        working-directory: m73
+        run: |
+          readelf -d modem73 | grep -q hidapi || {
+            echo "::error::binary is not linked against hidapi - CM108 PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Verify Hamlib support is compiled in
+        working-directory: m73
+        run: |
+          readelf -d modem73 | grep -q hamlib || {
+            echo "::error::binary is not linked against hamlib - Hamlib PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Stage install tree
+        working-directory: m73
+        run: |
+          make -f packaging/Makefile.pkg install DESTDIR=../staging PREFIX=/usr \
+               CC="${{ matrix.cc }}" CXX="${{ matrix.cxx }}"
+
+      - name: Build .rpm
+        working-directory: m73
+        run: |
+          HIDAPI_DEP=""
+          if [ -f ../staging/usr/lib/udev/rules.d/50-cm108-ptt.rules ]; then
+            HIDAPI_DEP="-d ${{ matrix.dep_hidapi }}"
+          fi
+          fpm -s dir -t rpm \
+            -n modem73 \
+            -v "${{ needs.prep.outputs.version }}" \
+            -a "${{ matrix.arch }}" \
+            --description "KISS TNC frontend for the aicodix OFDM modem." \
+            --url "https://github.com/${{ github.repository }}" \
+            --license "see LICENSE" \
+            --maintainer "modem73 maintainers" \
+            -d glibc \
+            -d '${{ matrix.dep_cxx }}' \
+            -d '${{ matrix.dep_ncurses }}' \
+            -d '${{ matrix.dep_hamlib }}' \
+            $HIDAPI_DEP \
+            -C ../staging \
+            -p "../modem73_${{ needs.prep.outputs.version }}_${{ matrix.id }}_${{ matrix.arch }}.rpm" \
+            usr
+
+      - name: Checksums
+        run: |
+          for f in modem73_*.rpm; do
+            sha256sum "$f" | tee "${f}.sha256"
+            sha512sum "$f" | tee "${f}.sha512"
+          done
+
+      - name: Smoke test
+        run: |
+          RPM="$(ls modem73_*.rpm)"
+          if [ "${{ matrix.family }}" = "fedora" ]; then
+            dnf -y install "./$RPM"
+          else
+            zypper -n --no-gpg-checks install --allow-unsigned-rpm "./$RPM"
+          fi
+          command -v modem73
+          rpm -ql modem73 | head -30
+          timeout 10 modem73 --help >/dev/null 2>&1 || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-rpm-${{ matrix.id }}-${{ matrix.arch }}
+          path: |
+            modem73_*.rpm
+            modem73_*.rpm.sha256
+            modem73_*.rpm.sha512
+
+  build-arch:
+    needs: prep
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: archlinux
+            arch: x86_64
+            arch_flags: "-march=x86-64-v2"
+
+    steps:
+      - name: Bootstrap container
+        run: |
+          pacman -Syu --needed --noconfirm git ca-certificates tar
+
+      - name: Checkout modem73
+        uses: actions/checkout@v7
+        with:
+          path: m73
+
+      - name: Install build dependencies
+        run: |
+          pacman -S --needed --noconfirm \
+            gcc make pkgconf ncurses hidapi hamlib ruby rubygems ruby-erb zstd fakeroot libarchive
+          gem install --no-document --no-user-install --no-format-executable --bindir /usr/bin fpm
+          if ! command -v fpm >/dev/null; then
+            FOUND="$(ls /usr/bin/fpm* "$(gem environment gemdir)"/bin/fpm* 2>/dev/null | head -1)"
+            if [ -n "$FOUND" ]; then
+              ln -sf "$FOUND" /usr/bin/fpm
+            else
+              printf '#!/bin/sh\nexec ruby -rrubygems -e '"'"'load Gem.activate_bin_path("fpm", "fpm", ">= 0")'"'"' -- "$@"\n' > /usr/bin/fpm
+              chmod +x /usr/bin/fpm
+            fi
+          fi
+          command -v fpm || { echo "::error::fpm not on PATH after gem install"; exit 1; }
+          fpm --version
+
+      - name: Build
+        working-directory: m73
+        run: |
+          make -f packaging/Makefile.pkg \
+               CC=gcc CXX=g++ \
+               ARCH_FLAGS="${{ matrix.arch_flags }}" \
+               VERSION="${{ needs.prep.outputs.version }}" \
+               -j"$(nproc)"
+
+      - name: Verify CM108 support is compiled in
+        working-directory: m73
+        run: |
+          readelf -d modem73 | grep -q hidapi || {
+            echo "::error::binary is not linked against hidapi - CM108 PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Verify Hamlib support is compiled in
+        working-directory: m73
+        run: |
+          readelf -d modem73 | grep -q hamlib || {
+            echo "::error::binary is not linked against hamlib - Hamlib PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Stage install tree
+        working-directory: m73
+        run: |
+          make -f packaging/Makefile.pkg install DESTDIR=../staging PREFIX=/usr
+
+      - name: Build package
+        working-directory: m73
+        run: |
+          HIDAPI_DEP=""
+          if [ -f ../staging/usr/lib/udev/rules.d/50-cm108-ptt.rules ]; then
+            HIDAPI_DEP="-d hidapi"
+          fi
+          fpm -s dir -t pacman \
+            -n modem73 \
+            -v "${{ needs.prep.outputs.version }}" \
+            -a "${{ matrix.arch }}" \
+            --description "KISS TNC frontend for the aicodix OFDM modem." \
+            --url "https://github.com/${{ github.repository }}" \
+            --license "see LICENSE" \
+            --maintainer "modem73 maintainers" \
+            -d glibc \
+            -d gcc-libs \
+            -d ncurses \
+            -d hamlib \
+            $HIDAPI_DEP \
+            -C ../staging \
+            -p "../modem73_${{ needs.prep.outputs.version }}_${{ matrix.id }}_${{ matrix.arch }}.pkg.tar.zst" \
+            usr
+
+      - name: Checksums
+        run: |
+          for f in modem73_*.pkg.tar.zst; do
+            sha256sum "$f" | tee "${f}.sha256"
+            sha512sum "$f" | tee "${f}.sha512"
+          done
+
+      - name: Smoke test
+        run: |
+          PKG="$(ls modem73_*.pkg.tar.zst)"
+          pacman -U --noconfirm "./$PKG"
+          command -v modem73
+          pacman -Ql modem73 | head -30
+          timeout 10 modem73 --help >/dev/null 2>&1 || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-arch-${{ matrix.id }}-${{ matrix.arch }}
+          path: |
+            modem73_*.pkg.tar.zst
+            modem73_*.pkg.tar.zst.sha256
+            modem73_*.pkg.tar.zst.sha512
+
+  build-macos:
+    needs: prep
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos-arm64
+            runner: macos-15
+            arch: arm64
+            arch_flags: ""
+          - id: macos-x86_64
+            runner: macos-15-intel
+            arch: x86_64
+            arch_flags: "-march=x86-64-v2"
+
+    steps:
+      - name: Checkout modem73
+        uses: actions/checkout@v7
+        with:
+          path: m73
+
+      - name: Install build dependencies
+        run: |
+          brew update
+          brew install pkgconf ncurses hidapi hamlib dylibbundler
+
+      - name: Build
+        working-directory: m73
+        run: |
+          make ARCHFLAGS="${{ matrix.arch_flags }}" \
+               VERSION="${{ needs.prep.outputs.version }}" \
+               -j"$(sysctl -n hw.ncpu)"
+
+      - name: Verify CM108 support is compiled in
+        working-directory: m73
+        run: |
+          otool -L modem73 | grep -q hidapi || {
+            echo "::error::binary is not linked against hidapi - CM108 PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Verify Hamlib support is compiled in
+        working-directory: m73
+        run: |
+          otool -L modem73 | grep -q hamlib || {
+            echo "::error::binary is not linked against hamlib - Hamlib PTT was silently disabled"
+            exit 1
+          }
+
+      - name: Bundle libraries
+        working-directory: m73
+        run: |
+          mkdir -p dist/modem73/libs
+          cp modem73 dist/modem73/
+          cp README.md QUICKSTART.md CONTROL_PORT.md LICENSE dist/modem73/
+          dylibbundler -od -b -x dist/modem73/modem73 -d dist/modem73/libs/ -p @executable_path/libs/
+          codesign --force -s - dist/modem73/libs/*.dylib dist/modem73/modem73
+          if otool -L dist/modem73/modem73 dist/modem73/libs/*.dylib | grep -E "/opt/homebrew|/usr/local/(Cellar|opt|lib)"; then
+            echo "::error::a Homebrew library was not bundled"
+            exit 1
+          fi
+
+      - name: Smoke test
+        working-directory: m73
+        run: |
+          ./dist/modem73/modem73 --help > help.txt 2>&1 || true
+          grep -q "hamlib" help.txt || { echo "::error::hamlib missing from --help"; cat help.txt; exit 1; }
+          grep -q "cm108" help.txt || { echo "::error::cm108 missing from --help"; cat help.txt; exit 1; }
+
+      - name: Package
+        working-directory: m73
+        run: |
+          V="${{ needs.prep.outputs.version }}"
+          tar -C dist -czf "../modem73_${V}_${{ matrix.id }}.tar.gz" modem73
+          cd ..
+          for f in modem73_*.tar.gz; do
+            shasum -a 256 "$f" | tee "${f}.sha256"
+            shasum -a 512 "$f" | tee "${f}.sha512"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-${{ matrix.id }}
+          path: |
+            modem73_*.tar.gz
+            modem73_*.tar.gz.sha256
+            modem73_*.tar.gz.sha512
+
+  release:
+    needs: [prep, build-deb, build-rpm, build-arch, build-macos]
+    if: |
+      !cancelled() &&
+      needs.build-deb.result == 'success' &&
+      needs.build-rpm.result == 'success' &&
+      needs.build-arch.result == 'success' &&
+      needs.build-macos.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'))
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: pkg-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lR dist
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || '' }}
+          name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || '' }}
+          files: |
+            dist/modem73_*.deb
+            dist/modem73_*.deb.sha256
+            dist/modem73_*.deb.sha512
+            dist/modem73_*.rpm
+            dist/modem73_*.rpm.sha256
+            dist/modem73_*.rpm.sha512
+            dist/modem73_*.pkg.tar.zst
+            dist/modem73_*.pkg.tar.zst.sha256
+            dist/modem73_*.pkg.tar.zst.sha512
+            dist/modem73_*.tar.gz
+            dist/modem73_*.tar.gz.sha256
+            dist/modem73_*.tar.gz.sha512
+          generate_release_notes: true
+          fail_on_unmatched_files: false

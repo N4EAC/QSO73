@@ -1,0 +1,2534 @@
+// RFDM: Robust Data Modes for fading HF channels.
+// QPSK carriers at 75 hz spacing, 20 ms symbols (13.3 ms + 6.7 ms cyclic prefix)
+//   wide (2400 hz, 32 carriers)          narrow (600 hz, 8 carriers)
+//   rdm-1200  (8192,4128) r=1/2  ~1150   rdmn-300  (8192,4128)  ~297 bps
+//   rdm-800   (16384,4128) 3/4-punctured, r~1/3  ~780
+//   rdm-600   (16384,4128) r=1/4  ~585   rdmn-150  (16384,4128) ~149 bps
+//   rdm-300   r=1/4 chase x2      ~296
+//   rdm-qb    (1024,288) r~0.28   ~475   micro burst: 32 B in 0.54 s
+//
+#pragma once
+
+#include <vector>
+#include <cstring>
+#include <memory>
+#include <cmath>
+#include <functional>
+#include <algorithm>
+#include "common.hh"
+#include "polar_tables_short.hh"
+#include "polar_tables_micro.hh"
+
+#ifndef CFO_REFINE_PASSES
+#define CFO_REFINE_PASSES 2
+#endif
+#ifndef RDMN_QGATE
+#define RDMN_QGATE 0.62
+#endif
+#ifndef RDMN_SANITY1
+#define RDMN_SANITY1 0.30f
+#endif
+#ifndef RDMN_SANITY3
+#define RDMN_SANITY3 0.45f
+#endif
+#ifndef RDMN_SCAN_GATE
+#define RDMN_SCAN_GATE 0.78
+#endif
+#ifndef RDM_WIN_BACK
+#define RDM_WIN_BACK 160
+#endif
+#ifndef IMPULSE_BLANKER
+#define IMPULSE_BLANKER 1
+#endif
+#ifndef RDM_LLR_GAIN
+#define RDM_LLR_GAIN 8
+#endif
+#ifndef RDM_TIMING_TRACK
+#define RDM_TIMING_TRACK 1
+#endif
+#ifndef RDM_BW_PILOT_CHECK
+#define RDM_BW_PILOT_CHECK 12
+#endif
+#ifndef RDM_FIX_RESTORE
+#define RDM_FIX_RESTORE 1
+#endif
+#ifndef RDM_ALIAS_QMIN
+#define RDM_ALIAS_QMIN 0.35
+#endif
+#include "hilbert.hh"
+#include "blockdc.hh"
+#include "polar_encoder.hh"
+#include "polar_list_decoder.hh"
+
+
+enum class RobustMode {
+    RDM_1200 = 0,
+    RDM_600  = 1,
+    RDM_300  = 2,
+    RDMN_300 = 3,
+    RDMN_150 = 4,
+    RDM_1200S = 5,
+    RDM_600S  = 6,
+    RDM_300S  = 7,
+    RDMN_300S = 8,
+    RDMN_150S = 9,
+    // appended after the 0-4/5-9 family blocks to keep those numbers stable
+    RDM_800   = 10,
+    RDM_800S  = 11,
+    // QB micro burst: 32 bytes in 22 rows (~0.54 s), (1024,288) r=0.28
+    RDM_QB    = 12
+};
+
+static const char* ROBUST_MODE_NAMES[] =
+    {"RDM-1200", "RDM-600", "RDM-300", "RDMN-300", "RDMN-150",
+     "RDM-1200S", "RDM-600S", "RDM-300S", "RDMN-300S", "RDMN-150S",
+     "RDM-800", "RDM-800S", "RDM-QB"};
+
+
+constexpr int ROBUST_MODE_COUNT = 13;
+
+struct RobustParams {
+    static constexpr int SAMPLE_RATE = 48000;
+    static constexpr int NFFT = 640;
+    static constexpr int CP = 320;
+    static constexpr int SYM = NFFT + CP;
+    static constexpr int SPACING = SAMPLE_RATE / NFFT;
+    static constexpr int NS = 4;
+    static constexpr int NC_MAX = 32;
+    static constexpr int DATA_BYTES = 512;
+    static constexpr int DATA_BITS = 8 * DATA_BYTES;
+    static constexpr int CRC_BITS = 32;
+    static constexpr int NROWS_MAX = 1369;
+
+    static bool is_narrow(RobustMode m) {
+        int i = (int)m;
+        return i < 10 && (i % 5 == 3 || i % 5 == 4);
+    }
+    static bool is_short(RobustMode m) {
+        int i = (int)m;
+        return (i >= 5 && i < 10) || i == 11;
+    }
+    static bool is_micro(RobustMode m) { return m == RobustMode::RDM_QB; }
+    static RobustMode with_framing(RobustMode m, bool short_frame) {
+        if (is_micro(m))
+            return m;
+        if ((int)m >= 10)
+            return short_frame ? RobustMode::RDM_800S : RobustMode::RDM_800;
+        return (RobustMode)((int)m % 5 + (short_frame ? 5 : 0));
+    }
+    static int nc(RobustMode m) { return is_narrow(m) ? 8 : 32; }
+    static int data_bytes(RobustMode m) {
+        return is_micro(m) ? 32 : is_short(m) ? 172 : DATA_BYTES;
+    }
+    static int data_bits(RobustMode m) { return 8 * data_bytes(m); }
+    static int mesg_bits(RobustMode m) { return data_bits(m) + CRC_BITS; }
+    static int code_order(RobustMode m) {
+        static const int t[] = {13, 14, 14, 13, 14, 12, 13, 13, 12, 13, 14, 13, 10};
+        return t[(int)m];
+    }
+    static int code_bits(RobustMode m) { return 1 << code_order(m); }
+    static int copies(RobustMode m) {
+        return m == RobustMode::RDM_300 || m == RobustMode::RDM_300S ? 2 : 1;
+    }
+    // RDM-800 transmits only 3/4 of the shuffled codeword; the receiver
+    // treats the rest as erasures, so the rate-1/4 mother code acts as a
+    // rate-1/3 code
+    static bool is_punctured(RobustMode m) {
+        return m == RobustMode::RDM_800 || m == RobustMode::RDM_800S;
+    }
+    static int sent_bits(RobustMode m) {
+        if (is_punctured(m))
+            return 3 * code_bits(m) / 4;
+        return code_bits(m) * copies(m);
+    }
+    // the punctured quarter is the HEAD of the shuffled codeword, so
+    // RDM-800 bits are misaligned relative to an RDM-600 prefix: a strong
+    // RDM-600 frame must not decode early (mislabeled, DCD dropped with
+    // the sender still keyed) at the shorter RDM-800 checkpoint
+    static int sent_offset(RobustMode m) {
+        return is_punctured(m) ? code_bits(m) / 4 : 0;
+    }
+    static const uint32_t* frozen(RobustMode m) {
+        if (is_micro(m))
+            return frozen_1024_288;
+        if (is_short(m))
+            return code_order(m) == 12 ? frozen_4096_1408 : frozen_8192_1408;
+        return code_order(m) == 13 ? frozen_8192_4128 : frozen_16384_4128;
+    }
+    static int nrows(RobustMode m) {
+        static const int t[] = {173, 345, 685, 685, 1369,
+                                89, 177, 349, 345, 689,
+                                257, 129, 22};
+        return t[(int)m];
+    }
+    static bool is_pilot_row(int i) { return i % NS == 0; }
+    static int frame_symbols(RobustMode m) { return 3 + nrows(m) + 2; }
+    static int base_bin(int center_freq, RobustMode m) {
+        return center_freq / SPACING - nc(m) / 2;
+    }
+    static float frame_duration(RobustMode m) {
+        return frame_symbols(m) * (float)SYM / SAMPLE_RATE;
+    }
+    static int bitrate(RobustMode m) {
+        return (int)(data_bits(m) / frame_duration(m));
+    }
+};
+
+namespace robust_detail {
+
+typedef float value;
+typedef DSP::Complex<float> cmplx;
+
+inline int nrz(bool bit) { return 1 - 2 * bit; }
+
+template <typename T>
+inline void shuffle_enc(T* dest, const T* src, int order) {
+    if (order == 10) {
+        CODE::XorShiftMask<int, 10, 1, 1, 3, 1> seq;
+        dest[0] = src[0];
+        for (int i = 1; i < 1024; ++i) dest[i] = src[seq()];
+    } else if (order == 12) {
+        CODE::XorShiftMask<int, 12, 1, 1, 4, 1> seq;
+        dest[0] = src[0];
+        for (int i = 1; i < 4096; ++i) dest[i] = src[seq()];
+    } else if (order == 13) {
+        CODE::XorShiftMask<int, 13, 1, 1, 9, 1> seq;
+        dest[0] = src[0];
+        for (int i = 1; i < 8192; ++i) dest[i] = src[seq()];
+    } else {
+        CODE::XorShiftMask<int, 14, 1, 5, 10, 1> seq;
+        dest[0] = src[0];
+        for (int i = 1; i < 16384; ++i) dest[i] = src[seq()];
+    }
+}
+
+template <typename T>
+inline void shuffle_dec(T* dest, const T* src, int order) {
+    if (order == 10) {
+        CODE::XorShiftMask<int, 10, 1, 1, 3, 1> seq;
+        dest[0] = src[0];
+        for (int i = 1; i < 1024; ++i) dest[seq()] = src[i];
+    } else if (order == 12) {
+        CODE::XorShiftMask<int, 12, 1, 1, 4, 1> seq;
+        dest[0] = src[0];
+        for (int i = 1; i < 4096; ++i) dest[seq()] = src[i];
+    } else if (order == 13) {
+        CODE::XorShiftMask<int, 13, 1, 1, 9, 1> seq;
+        dest[0] = src[0];
+        for (int i = 1; i < 8192; ++i) dest[seq()] = src[i];
+    } else {
+        CODE::XorShiftMask<int, 14, 1, 5, 10, 1> seq;
+        dest[0] = src[0];
+        for (int i = 1; i < 16384; ++i) dest[seq()] = src[i];
+    }
+}
+
+}
+
+class RobustEncoder {
+    typedef robust_detail::value value;
+    typedef robust_detail::cmplx cmplx;
+public:
+    std::vector<float> encode(const uint8_t* data, size_t len,
+                              int center_freq, RobustMode mode) {
+        using namespace robust_detail;
+        if (rot_nc_ != RobustParams::nc(mode)) {
+            rot_nc_ = RobustParams::nc(mode);
+            for (int k = 0; k < rot_nc_; ++k)
+                rot_[k] = DSP::polar<value>(1,
+                    (value)M_PI * k * k / rot_nc_);
+        }
+        const int order = RobustParams::code_order(mode);
+        const int cbits = RobustParams::code_bits(mode);
+        const int nrows = RobustParams::nrows(mode);
+        const int nc = RobustParams::nc(mode);
+        const int base = RobustParams::base_bin(center_freq, mode);
+
+        const int dbytes = RobustParams::data_bytes(mode);
+        const int dbits = RobustParams::data_bits(mode);
+        uint8_t buf[RobustParams::DATA_BYTES];
+        std::memset(buf, 0, sizeof(buf));
+        std::memcpy(buf, data, std::min(len, (size_t)dbytes));
+        CODE::Xorshift32 scrambler;
+        for (int i = 0; i < dbytes; ++i)
+            buf[i] ^= scrambler();
+        for (int i = 0; i < dbits; ++i)
+            mesg_[i] = nrz(CODE::get_le_bit(buf, i));
+        crc_.reset();
+        for (int i = 0; i < dbytes; ++i)
+            crc_(buf[i]);
+        for (int i = 0; i < RobustParams::CRC_BITS; ++i)
+            mesg_[dbits + i] = nrz((crc_() >> i) & 1);
+        polar_encoder_(code_, mesg_, RobustParams::frozen(mode), order);
+        shuffle_enc(perm_, code_, order);
+
+        int8_t pre[RobustParams::NC_MAX], post[RobustParams::NC_MAX];
+        CODE::MLS pre_seq(0x331, 214), post_seq(0x331, 97);
+        for (int k = 0; k < nc; ++k) {
+            pre[k] = nrz(pre_seq());
+            post[k] = nrz(post_seq());
+        }
+        CODE::MLS pilot_seq(0x163, RobustParams::is_narrow(mode) ? 89 : 1);
+        CODE::MLS filler_seq(0x43);
+
+        std::vector<float> out;
+        out.reserve((size_t)RobustParams::frame_symbols(mode) * RobustParams::SYM);
+
+        {
+            cmplx tones[RobustParams::NC_MAX];
+            CODE::MLS noise_seq(0x331);
+            for (int k = 0; k < nc; ++k)
+                tones[k] = cmplx(nrz(noise_seq()), 0);
+            emit_symbol(out, tones, base, nc, true);
+        }
+        {
+            cmplx tones[RobustParams::NC_MAX];
+            for (int k = 0; k < nc; ++k)
+                tones[k] = cmplx(pre[k], 0);
+            emit_symbol(out, tones, base, nc, true);
+            emit_symbol(out, tones, base, nc, true);
+        }
+        int kbit = 0;
+        const int total_bits = RobustParams::sent_bits(mode);
+        const int poff = RobustParams::sent_offset(mode);
+        for (int row = 0; row < nrows; ++row) {
+            cmplx tones[RobustParams::NC_MAX];
+            if (RobustParams::is_pilot_row(row)) {
+                for (int k = 0; k < nc; ++k)
+                    tones[k] = cmplx(nrz(pilot_seq()), 0);
+            } else {
+                for (int k = 0; k < nc; ++k) {
+                    int8_t b[2];
+                    if (kbit + 1 < total_bits) {
+                        b[0] = perm_[(poff + kbit) % cbits];
+                        b[1] = perm_[(poff + kbit + 1) % cbits];
+                    } else {
+                        b[0] = nrz(filler_seq());
+                        b[1] = nrz(filler_seq());
+                    }
+                    kbit += 2;
+                    tones[k] = PhaseShiftKeying<4, cmplx, int8_t>::map(b);
+                }
+            }
+            emit_symbol(out, tones, base, nc);
+        }
+        {
+            cmplx tones[RobustParams::NC_MAX];
+            for (int k = 0; k < nc; ++k)
+                tones[k] = cmplx(post[k], 0);
+            emit_symbol(out, tones, base, nc, true);
+            emit_symbol(out, tones, base, nc, true);
+        }
+        tx_filter(out, center_freq, nc);
+        return out;
+    }
+
+    int get_payload_size(RobustMode m) { return RobustParams::data_bytes(m); }
+
+private:
+    // clipping raised the average power codec2-style; this contains the
+    // spectral regrowth so the drive stays inside the occupied bandwidth
+    void tx_filter(std::vector<float>& out, int center_freq, int nc) {
+        const int L = 257;
+        uint64_t key = ((uint64_t)center_freq << 8) | (uint32_t)nc;
+        if (key != tx_bpf_key_) {
+            int half = nc * RobustParams::SPACING / 2 + (nc <= 8 ? 150 : 400);
+            value f1 = std::max(100, center_freq - half);
+            value f2 = std::min(RobustParams::SAMPLE_RATE / 2 - 100,
+                                center_freq + half);
+            for (int i = 0; i < L; ++i) {
+                int k = i - L / 2;
+                value lp2 = k == 0 ? 2 * f2 / RobustParams::SAMPLE_RATE
+                    : std::sin(2 * (value)M_PI * f2 * k / RobustParams::SAMPLE_RATE)
+                        / ((value)M_PI * k);
+                value lp1 = k == 0 ? 2 * f1 / RobustParams::SAMPLE_RATE
+                    : std::sin(2 * (value)M_PI * f1 * k / RobustParams::SAMPLE_RATE)
+                        / ((value)M_PI * k);
+                value w = value(0.54) - value(0.46)
+                    * std::cos(2 * (value)M_PI * i / (L - 1));
+                tx_bpf_[i] = (lp2 - lp1) * w;
+            }
+            tx_bpf_key_ = key;
+        }
+        std::vector<float> x;
+        x.swap(out);
+        out.assign(x.size() + L - 1, 0.0f);
+        for (size_t i = 0; i < x.size(); ++i) {
+            float v = x[i];
+            if (v == 0.0f)
+                continue;
+            for (int j = 0; j < L; ++j)
+                out[i + j] += v * tx_bpf_[j];
+        }
+        for (auto& v : out)
+            v = std::max(-0.95f, std::min(0.95f, v));
+    }
+
+    DSP::FastFourierTransform<RobustParams::NFFT, robust_detail::cmplx, 1> bwd_;
+    robust_detail::cmplx rot_[RobustParams::NC_MAX];
+    int rot_nc_ = 0;
+    value tx_bpf_[257];
+    uint64_t tx_bpf_key_ = (uint64_t)-1;
+    CODE::PolarEncoder<int8_t> polar_encoder_;
+    CODE::CRC<uint32_t> crc_{0x8F6E37A0};
+    int8_t mesg_[RobustParams::DATA_BITS + RobustParams::CRC_BITS];
+    int8_t code_[1 << 14];
+
+
+
+    int8_t perm_[1 << 14];
+
+    void emit_symbol(std::vector<float>& out, const robust_detail::cmplx* tones,
+                     int base, int nc, bool rotate = false) {
+        typedef robust_detail::cmplx cmplx;
+        cmplx fdom[RobustParams::NFFT], tdom[RobustParams::NFFT];
+        for (int i = 0; i < RobustParams::NFFT; ++i)
+            fdom[i] = cmplx(0, 0);
+        for (int k = 0; k < nc; ++k)
+            fdom[base + k] = rotate ? tones[k] * rot_[k] : tones[k];
+        bwd_(tdom, fdom);
+        const float scale = 0.62f / std::sqrt((float)nc);
+        auto clip = [](float v) {
+            float a = v / 0.95f, a2 = a * a;
+            return 0.95f * a / std::pow(1.0f + a2 * a2 * a2, 1.0f / 6.0f);
+        };
+        for (int i = RobustParams::NFFT - RobustParams::CP; i < RobustParams::NFFT; ++i)
+            out.push_back(clip(scale * tdom[i].real()));
+        for (int i = 0; i < RobustParams::NFFT; ++i)
+            out.push_back(clip(scale * tdom[i].real()));
+    }
+};
+
+class RobustDecoder {
+    typedef robust_detail::value value;
+    typedef robust_detail::cmplx cmplx;
+    typedef int16_t code_type;
+    typedef SIMD<code_type, 32> mesg_type;
+    typedef SIMD<code_type, 64> mesg64_type;
+public:
+    using FrameCallback = std::function<void(const uint8_t*, size_t)>;
+
+    RobustDecoder(int center_freq = 1500, bool narrow = false)
+        : narrow_(narrow) {
+        blockdc_.samples(129);
+        if (narrow_) {
+            modes_[0] = RobustMode::RDMN_300S;
+            modes_[1] = RobustMode::RDMN_300;
+            modes_[2] = RobustMode::RDMN_150S;
+            modes_[3] = RobustMode::RDMN_150;
+            nmodes_ = 4;
+        } else {
+            // ascending nrows so each mode's checkpoint is reached in order
+            modes_[0] = RobustMode::RDM_QB;     // 22 rows
+            modes_[1] = RobustMode::RDM_1200S;  // 89
+            modes_[2] = RobustMode::RDM_800S;   // 129
+            modes_[3] = RobustMode::RDM_1200;   // 173
+            modes_[4] = RobustMode::RDM_600S;   // 177
+            modes_[5] = RobustMode::RDM_800;    // 257
+            modes_[6] = RobustMode::RDM_600;    // 345
+            modes_[7] = RobustMode::RDM_300S;   // 349
+            modes_[8] = RobustMode::RDM_300;    // 685
+            nmodes_ = 9;
+        }
+        nc_ = RobustParams::nc(modes_[0]);
+        for (int k = 0; k < nc_; ++k)
+            rot_[k] = DSP::polar<value>(1, (value)M_PI * k * k / nc_);
+        nrows_top_ = RobustParams::nrows(modes_[nmodes_ - 1]);
+        keep_ = (size_t)(2 * nrows_top_ + 10) * RobustParams::SYM + 2 * D;
+        {
+            // pilot patterns for mid-frame acquisition: same MLS stream the
+            // encoder feeds into every 4th row
+            CODE::MLS ps(0x163, narrow_ ? 89 : 1);
+            npat_ = nrows_top_ / RobustParams::NS + 1;
+            for (int j = 0; j < npat_; ++j)
+                for (int k = 0; k < nc_; ++k)
+                    pat_[j][k] = robust_detail::nrz(ps());
+            for (int j = 0; j + 1 < npat_; ++j)
+                for (int k = 0; k < nc_; ++k)
+                    qpat_[j][k] = pat_[j][k] * pat_[j + 1][k];
+        }
+        configure(center_freq);
+    }
+
+    void configure(int center_freq) {
+        base_ = RobustParams::base_bin(center_freq, modes_[0]);
+        int half = nc_ * RobustParams::SPACING / 2 + 200;
+        value f1 = std::max(100, center_freq - half);
+        value f2 = std::min(RobustParams::SAMPLE_RATE / 2 - 100, center_freq + half);
+        for (int i = 0; i < bpf_len; ++i) {
+            int k = i - bpf_len / 2;
+            value lp2 = k == 0 ? 2 * f2 / RobustParams::SAMPLE_RATE
+                : std::sin(2 * (value)M_PI * f2 * k / RobustParams::SAMPLE_RATE)
+                    / ((value)M_PI * k);
+            value lp1 = k == 0 ? 2 * f1 / RobustParams::SAMPLE_RATE
+                : std::sin(2 * (value)M_PI * f1 * k / RobustParams::SAMPLE_RATE)
+                    / ((value)M_PI * k);
+            value w = value(0.54) - value(0.46)
+                * std::cos(2 * (value)M_PI * i / (bpf_len - 1));
+            bpf_taps_[i] = (lp2 - lp1) * w;
+        }
+        std::memset(bpf_hist_, 0, sizeof(bpf_hist_));
+        bpf_pos_ = 0;
+        reset();
+    }
+
+    void reset() {
+        buf_.clear();
+        state_ = State::SEARCH;
+        P_ = cmplx(0, 0);
+        Ra_ = Rb_ = 0;
+        rows_done_ = 0;
+        tried_mask_ = 0;
+        confirmed_ = false;
+        pilot_alive_total_ = -1;
+        for (int i = 0; i < SCAN_RING; ++i)
+            scan_stamp_[i] = -1;
+        for (int i = 0; i < SCAN_HIST; ++i) {
+            scan_best_q_[i] = 0;
+            scan_best_stamp_[i] = -1;
+        }
+        pilot_hold_ = 0;
+        spec_n_ = 0;
+        entry_pr_ = 0;
+        entry_checked_ = true;
+        trail_anchor_ = -1;
+        prev_peak_pos_ = -1;
+        last_decode_start_ = -1;
+    }
+
+    void process(const float* samples, size_t count, FrameCallback callback) {
+        for (size_t s = 0; s < count; ++s) {
+            value smp = samples[s];
+#if IMPULSE_BLANKER
+            {
+                value mag = std::abs(smp);
+                blank_fast_ += (mag - blank_fast_) * value(1.0 / 64);
+                if (blank_env_ < value(1e-9))
+                    blank_env_ = mag;
+                if (blank_env_ < blank_fast_ * value(1.0 / 6)) {
+                    if (++blank_low_ >= 256) {
+                        blank_env_ = blank_fast_;
+                        blank_low_ = 0;
+                    }
+                } else {
+                    blank_low_ = 0;
+                }
+                if (mag > 8 * blank_env_)
+                    smp = 0;
+                else if (mag > 6 * blank_env_)
+                    smp *= 6 * blank_env_ / mag;
+                blank_env_ += (std::min(mag, 3 * blank_env_) - blank_env_)
+                            * value(1.0 / 4096);
+            }
+#endif
+            cmplx x = hilbert_(blockdc_(bandpass(smp)));
+            buf_.push_back(x);
+            ++total_in_;
+            int64_t n = (int64_t)buf_.size() - 1;
+
+            switch (state_) {
+            case State::SEARCH: {
+                if (n < 2 * D)
+                    break;
+                if (n == 2 * D || (total_in_ & 0x3fff) == 0) {
+                    refresh_sums(n);
+                } else {
+                    P_ = P_ + buf_[n] * conj(buf_[n - D])
+                           - buf_[n - D] * conj(buf_[n - 2 * D]);
+                    Rb_ += norm(buf_[n]) - norm(buf_[n - D]);
+                    Ra_ += norm(buf_[n - D]) - norm(buf_[n - 2 * D]);
+                }
+                if (total_in_ >= pilot_hold_ &&
+                    (total_in_ % SCAN_STRIDE) == 0 && pilot_scan(n))
+                    break;
+                value m = norm(P_) / (Ra_ * Rb_ + value(1e-9));
+                if (m > value(0.15)) {
+                    state_ = State::PEAK;
+                    peak_metric_ = m;
+                    peak_pos_ = n;
+                    peak_deadline_ = n + 2 * D;
+                    prev_peak_pos_ = -1;
+                }
+                break;
+            }
+            case State::PEAK: {
+                if ((total_in_ & 0x3fff) == 0) {
+                    refresh_sums(n);
+                } else {
+                    P_ = P_ + buf_[n] * conj(buf_[n - D])
+                           - buf_[n - D] * conj(buf_[n - 2 * D]);
+                    Rb_ += norm(buf_[n]) - norm(buf_[n - D]);
+                    Ra_ += norm(buf_[n - D]) - norm(buf_[n - 2 * D]);
+                }
+                if (total_in_ >= pilot_hold_ &&
+                    (total_in_ % SCAN_STRIDE) == 0 && pilot_scan(n))
+                    break;
+                value m = norm(P_) / (Ra_ * Rb_ + value(1e-9));
+                if (m > peak_metric_) {
+                    if (n - peak_pos_ > RobustParams::NFFT)
+                        prev_peak_pos_ = peak_pos_;
+                    peak_metric_ = m;
+                    peak_pos_ = n;
+                }
+                if (n >= peak_deadline_) {
+                    int kind = lock();
+                    if (kind == 1) {
+                        if (prev_peak_pos_ >= 0 &&
+                            try_trail_rescue_at(prev_peak_pos_, callback))
+                            ++stats_rescues;
+                        prev_peak_pos_ = -1;
+                        state_ = State::COLLECT;
+                        locked_q_ = lock_q_;
+                        cand_deadline_ = -1;
+                        pilot_alive_total_ = total_in_;
+                    } else {
+                        if (kind == 2) {
+                            if (rescue_backward(callback))
+                                ++stats_rescues;
+                            else
+                                consume_anchor();
+                        }
+                        state_ = State::SEARCH;
+                    }
+                }
+                break;
+            }
+            case State::COLLECT: {
+                if (confirmed_ && pilot_alive_total_ >= 0 &&
+                    total_in_ - pilot_alive_total_ > COLLECT_STALE &&
+                    rows_done_ >= RobustParams::nrows(modes_[0])) {
+                    if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                              << ": carrier dropped, finalizing at "
+                              << rows_done_ << " rows" << std::endl;
+                    finalize_collect(callback);
+
+                    break;
+                }
+                if ((total_in_ & 0x3fff) == 0) {
+                    refresh_sums(n);
+                } else {
+                    P_ = P_ + buf_[n] * conj(buf_[n - D])
+                           - buf_[n - D] * conj(buf_[n - 2 * D]);
+                    Rb_ += norm(buf_[n]) - norm(buf_[n - D]);
+                    Ra_ += norm(buf_[n - D]) - norm(buf_[n - 2 * D]);
+                }
+                {
+                    value m = norm(P_) / (Ra_ * Rb_ + value(1e-9));
+                    if (cand_deadline_ < 0) {
+                        if (m > value(0.15) && n > frame_pos_ + 2 * D) {
+                            cand_metric_ = m;
+                            cand_pos_ = n;
+                            cand_deadline_ = n + 2 * D;
+                        }
+                    } else if (m > cand_metric_) {
+                        cand_metric_ = m;
+                        cand_pos_ = n;
+                    }
+                }
+                if (cand_deadline_ >= 0 && n >= cand_deadline_) {
+                    cand_deadline_ = -1;
+                    int64_t s_fp = frame_pos_, s_au = anchor_u_, s_pp = peak_pos_;
+                    int64_t s_ta = trail_anchor_;
+                    int s_off[RobustParams::NROWS_MAX + 2];
+                    std::memcpy(s_off, row_off_, sizeof(s_off));
+                    value s_om = omega_;
+                    int s_bu = base_use_, s_rd = rows_done_;
+                    unsigned s_tm = tried_mask_;
+                    bool s_cf = confirmed_, s_pe = pilot_entry_;
+                    peak_pos_ = cand_pos_;
+                    bool stale = pilot_alive_total_ >= 0 &&
+                                 total_in_ - pilot_alive_total_ >= PREEMPT_STALE;
+                    int lk = lock();
+                    if (lk == 1 && (lock_q_ > locked_q_ + value(0.08) || stale)) {
+                        if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                                  << ": collect preempted (q=" << lock_q_
+                                  << " over " << locked_q_
+                                  << (stale ? ", stale" : "") << ")" << std::endl;
+                        int n_off[RobustParams::NROWS_MAX + 2];
+                        std::memcpy(n_off, row_off_, sizeof(n_off));
+                        bool rescued = false;
+                        if (s_ta >= 0) {
+                            int64_t n_fp = frame_pos_, n_au = anchor_u_;
+                            value n_om = omega_;
+                            anchor_u_ = s_ta;
+                            omega_ = trail_omega_;
+                            rescued = rescue_backward(callback, false);
+                            frame_pos_ = n_fp;
+                            anchor_u_ = n_au;
+                            omega_ = n_om;
+                        }
+                        if (!rescued && s_cf) {
+#if RDM_FIX_RESTORE
+                            int64_t n_fp = frame_pos_;
+                            value n_om = omega_;
+                            int n_bu = base_use_;
+                            frame_pos_ = s_fp;
+                            omega_ = s_om;
+                            base_use_ = s_bu;
+                            std::memcpy(row_off_, s_off, sizeof(s_off));
+                            for (int i = 0; i < s_rd; ++i) {
+                                int64_t st = row_start(i);
+                                if (st >= 0 && st + RobustParams::NFFT <= (int64_t)buf_.size())
+                                    take_row(i, st);
+                            }
+#endif
+                            for (int mi = 0; mi < nmodes_ && !rescued; ++mi) {
+                                RobustMode rm = modes_[mi];
+                                int nr = RobustParams::nrows(rm);
+                                if (nr <= s_rd || s_rd < nr / 2)
+                                    continue;
+                                for (int i = s_rd; i < nr; ++i)
+                                    for (int k = 0; k < nc_; ++k)
+                                        rows_[i][k] = cmplx(0, 0);
+                                if (try_decode(rm, callback)) {
+                                    if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                                              << ": tail rescue "
+                                              << ROBUST_MODE_NAMES[(int)rm]
+                                              << " at " << s_rd << " rows"
+                                              << std::endl;
+                                    if (pilot_alive_total_ >= 0)
+                                        last_decode_total_ = pilot_alive_total_;
+                                    last_decode_start_ = total_in_
+                                        - (int64_t)buf_.size() + frame_pos_;
+                                    rescued = true;
+                                }
+                            }
+#if RDM_FIX_RESTORE
+                            frame_pos_ = n_fp;
+                            omega_ = n_om;
+                            base_use_ = n_bu;
+#endif
+                        }
+                        std::memcpy(row_off_, n_off, sizeof(n_off));
+                        if (rescued)
+                            ++stats_rescues;
+                        else
+                            ++stats_false_locks;
+                        locked_q_ = lock_q_;
+                        pilot_alive_total_ = total_in_;
+                        break;
+                    }
+                    if (lk == 2) {
+                        // remember the trail seen mid-collect: if the ladder
+                        // exhausts it is a second chance to decode backward
+                        trail_anchor_ = anchor_u_;
+                        trail_omega_ = omega_;
+                    }
+                    std::memcpy(row_off_, s_off, sizeof(s_off));
+                    frame_pos_ = s_fp; anchor_u_ = s_au; peak_pos_ = s_pp;
+                    omega_ = s_om; base_use_ = s_bu;
+                    rows_done_ = s_rd; tried_mask_ = s_tm;
+                    confirmed_ = s_cf; pilot_entry_ = s_pe;
+                    if (lk != 2)
+                        trail_anchor_ = s_ta;
+                }
+                while (rows_done_ < nrows_top_) {
+                    int64_t start = row_start(rows_done_);
+                    if (start + RobustParams::NFFT > (int64_t)buf_.size())
+                        break;
+                    if (start < 0) {
+                        for (int k = 0; k < nc_; ++k)
+                            rows_[rows_done_][k] = cmplx(0, 0);
+                    } else {
+                        take_row(rows_done_, start);
+                    }
+                    ++rows_done_;
+                    if (pilot_entry_ && !entry_checked_ &&
+                        rows_done_ == RobustParams::NS * entry_pr_ + 1) {
+                        // a pilot entry commits to a frame grid derived from
+                        // three differential hits; re-verify against the
+                        // demodulated pilot rows around the entry point (the
+                        // head rows may legitimately be noise on a late
+                        // join, so the row-0/row-8 sanity gates stay off)
+                        entry_checked_ = true;
+                        if (!pilot_window_live(entry_pr_, 3,
+                                               nc_ <= 8 ? RDMN_SANITY3 : 0.28f)) {
+                            if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                                      << ": pilot entry rejected"
+                                      << std::endl;
+                            state_ = State::SEARCH;
+                            rows_done_ = 0;
+                            confirmed_ = false;
+                            pilot_entry_ = false;
+                            pilot_hold_ = total_in_ + 8 * D;
+                            ++stats_false_locks;
+                            break;
+                        }
+                    }
+                    if ((rows_done_ - 1) % RobustParams::NS == 0) {
+                        int pr = (rows_done_ - 1) / RobustParams::NS;
+                        int wrows = nc_ <= 8 ? 48 : 12;
+                        int w = pr + 1 < wrows ? pr + 1 : wrows;
+                        if (pr >= 2 && (pr + 1) % 2 == 0 &&
+                            pilot_window_live(pr, w, 0.10f))
+                            pilot_alive_total_ = total_in_;
+#if RDM_TIMING_TRACK
+                        else if (confirmed_ && pr >= 2 && (pr + 1) % 2 == 0 &&
+                                 pilot_alive_total_ >= 0 &&
+                                 total_in_ - pilot_alive_total_ > 48000 &&
+                                 rows_done_ >= 64 && realign_collect())
+                            pilot_alive_total_ = total_in_;
+#endif
+                    }
+                    if (rows_done_ == 2 * RobustParams::NS + 1 &&
+                        !confirmed_ &&
+                        pilot_sanity(3, nc_ <= 8 ? RDMN_SANITY3 : 0.28f)) {
+                        ++stats_sync_count;
+                        confirmed_ = true;
+                    } else if (!pilot_entry_ &&
+                        ((rows_done_ == 1 && !pilot_sanity(1, nc_ <= 8 ? RDMN_SANITY1 : 0.18f)) ||
+                        (rows_done_ == 2 * RobustParams::NS + 1 &&
+                         !pilot_sanity(3, nc_ <= 8 ? RDMN_SANITY3 : 0.28f)))) {
+                        if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                                  << ": collect abort at row " << rows_done_
+                                  << std::endl;
+                        state_ = State::SEARCH;
+                        rows_done_ = 0;
+                        confirmed_ = false;
+                        ++stats_false_locks;
+                        break;
+                    }
+                    bool done = false;
+                    for (int mi = 0; mi < nmodes_; ++mi) {
+                        if (rows_done_ != RobustParams::nrows(modes_[mi]) ||
+                            ((tried_mask_ >> mi) & 1))
+                            continue;
+                        tried_mask_ |= 1u << mi;
+                        bool last = mi == nmodes_ - 1;
+                        if (try_decode(modes_[mi], callback)) {
+                            finish_frame(modes_[mi]);
+                            done = true;
+                        } else if (last) {
+                            RobustMode rm;
+                            if (retry_ladder(callback, rm)) {
+                                finish_frame(rm);
+                                done = true;
+                            } else {
+                                ++stats_crc_errors;
+                                if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                                          << ": ladder exhausted at "
+                                          << rows_done_ << " rows" << std::endl;
+                                finalize_collect(callback);
+                                done = true;
+                            }
+                        }
+                        break;
+                    }
+                    if (done)
+                        break;
+                }
+                break;
+            }
+            }
+        }
+        if (state_ == State::SEARCH && buf_.size() > keep_ + 262144) {
+            size_t cut = buf_.size() - keep_;
+            buf_.erase(buf_.begin(), buf_.begin() + cut);
+            refresh_sums((int64_t)buf_.size() - 1);
+        }
+    }
+
+    bool debug_log = true;
+
+    void set_enhanced_retry(bool enabled) { enhanced_retry_ = enabled; }
+
+    float get_last_snr() const { return last_snr_; }
+    float get_last_ber() const { return last_ber_; }
+    float get_ber_ema() const { return ber_ema_; }
+    RobustMode get_last_mode() const { return last_mode_; }
+
+    bool in_frame() const { return state_ != State::SEARCH; }
+
+    bool carrier_active() const {
+        return state_ != State::SEARCH && confirmed_ &&
+               (pilot_alive_total_ < 0 ||
+                total_in_ - pilot_alive_total_ < DCD_GRACE);
+    }
+
+    int stats_sync_count = 0;
+    int stats_preamble_errors = 0;
+    int stats_false_locks = 0;
+    int stats_crc_errors = 0;
+    int stats_rescues = 0;
+    int stats_backward_rescues = 0;
+    int stats_ladder_rescues = 0;
+    int stats_retry_success = 0;
+    int stats_pilot_syncs = 0;
+
+    void reset_stats() {
+        stats_sync_count = 0;
+        stats_preamble_errors = 0;
+        stats_false_locks = 0;
+        stats_crc_errors = 0;
+        stats_rescues = 0;
+        stats_backward_rescues = 0;
+        stats_ladder_rescues = 0;
+        stats_retry_success = 0;
+        last_snr_ = 0;
+        last_ber_ = -1;
+        ber_ema_ = -1;
+    }
+
+private:
+    static constexpr int D = RobustParams::SYM;
+
+    enum class State { SEARCH, PEAK, COLLECT };
+    State state_ = State::SEARCH;
+
+    DSP::BlockDC<value, value> blockdc_;
+    DSP::Hilbert<cmplx, 129> hilbert_;
+    DSP::FastFourierTransform<RobustParams::NFFT, cmplx, -1> fwd_;
+    CODE::PolarListDecoder<mesg_type, 14> polar_decoder_;
+    CODE::PolarListDecoder<mesg64_type, 14> polar_decoder64_;
+    CODE::PolarEncoder<int8_t> ber_encoder_;
+    bool enhanced_retry_ = false;
+    CODE::CRC<uint32_t> crc_{0x8F6E37A0};
+
+    static const int bpf_len = 257;
+    value bpf_taps_[bpf_len];
+    value bpf_hist_[bpf_len];
+    int bpf_pos_ = 0;
+    value blank_env_ = 0;
+    value blank_fast_ = 0;
+    int blank_low_ = 0;
+
+    value bandpass(value x) {
+        bpf_hist_[bpf_pos_] = x;
+        value acc = 0;
+        int idx = bpf_pos_;
+        for (int i = 0; i < bpf_len; ++i) {
+            acc += bpf_taps_[i] * bpf_hist_[idx];
+            if (--idx < 0)
+                idx = bpf_len - 1;
+        }
+        if (++bpf_pos_ >= bpf_len)
+            bpf_pos_ = 0;
+        return acc;
+    }
+
+
+
+    bool narrow_ = false;
+    int nc_ = 32;
+    RobustMode modes_[9] = {RobustMode::RDM_1200, RobustMode::RDM_600,
+                            RobustMode::RDM_300};
+    int nmodes_ = 3;
+    int nrows_top_ = 685;
+    size_t keep_ = 0;
+
+
+    std::vector<cmplx> buf_;
+    int64_t total_in_ = 0;
+    int64_t last_decode_total_ = 0;
+    int64_t last_decode_start_ = -1;
+    int64_t prev_peak_pos_ = -1;
+
+    int base_ = 4;
+    int base_use_ = 4;
+
+    cmplx P_{0, 0};
+    value Ra_ = 0, Rb_ = 0, peak_metric_ = 0;
+    int64_t peak_pos_ = 0, peak_deadline_ = 0;
+
+    value omega_ = 0;
+    int64_t frame_pos_ = 0;
+    int64_t anchor_u_ = 0;
+    int rows_done_ = 0;
+    unsigned tried_mask_ = 0;
+    value lock_q_ = 0;
+    value locked_q_ = 0;
+    int64_t spent_anchor_ = -((int64_t)1 << 60);
+    value cand_metric_ = 0;
+    int64_t cand_pos_ = 0;
+    int64_t cand_deadline_ = -1;
+    // set once the row-9 pilot sanity passes: the collect is a real frame,
+    // not a lock that will be culled; gates the DCD so noise-floor false
+    // locks never assert carrier_active
+    bool confirmed_ = false;
+    int64_t pilot_alive_total_ = -1;
+    static constexpr int64_t PREEMPT_STALE = 288000;
+    static constexpr int64_t DCD_GRACE = 48000;
+
+    cmplx rows_[RobustParams::NROWS_MAX][RobustParams::NC_MAX];
+    cmplx rot_[RobustParams::NC_MAX];
+    int8_t pre_[RobustParams::NC_MAX];
+    int8_t post_[RobustParams::NC_MAX];
+    bool seq_init_ = false;
+
+    // mid-frame acquisition off the pilot rows: a symbol-length FFT every
+    // SCAN_STRIDE samples, differentially matched (this pilot row against the
+    // one 4 symbols earlier) so channel phase and window timing cancel
+    static constexpr int SCAN_STRIDE = 240;
+    static constexpr int SCAN_PAIR = 4 * RobustParams::SYM / SCAN_STRIDE;
+    static constexpr int SCAN_RING = SCAN_PAIR + 1;
+    int8_t pat_[RobustParams::NROWS_MAX / RobustParams::NS + 1]
+               [RobustParams::NC_MAX];
+    int8_t qpat_[RobustParams::NROWS_MAX / RobustParams::NS + 1]
+                [RobustParams::NC_MAX];
+    int npat_ = 0;
+    cmplx scan_bins_[SCAN_RING][RobustParams::NC_MAX + 4];
+    int64_t scan_stamp_[SCAN_RING] = {};
+    static constexpr int SCAN_HIST = 2 * SCAN_PAIR + 1;
+    int scan_best_j_[SCAN_HIST];
+    int scan_best_b_[SCAN_HIST];
+    value scan_best_q_[SCAN_HIST];
+    int64_t scan_best_stamp_[SCAN_HIST];
+    bool pilot_entry_ = false;
+    int entry_pr_ = 0;
+    bool entry_checked_ = true;
+    int64_t pilot_hold_ = 0;
+    value spec_avg_[RobustParams::NC_MAX + 4] = {};
+    int64_t spec_n_ = 0;
+    int64_t trail_anchor_ = -1;
+    value trail_omega_ = 0;
+
+
+
+
+
+
+
+    static constexpr int64_t COLLECT_STALE = 2 * DCD_GRACE;
+
+    void scan_fft(int64_t start, cmplx* bins) {
+        cmplx tdom[RobustParams::NFFT], fdom[RobustParams::NFFT];
+        for (int i = 0; i < RobustParams::NFFT; ++i)
+            tdom[i] = buf_[start + i];
+        fwd_(fdom, tdom);
+        for (int k = 0; k < nc_ + 4; ++k)
+            bins[k] = fdom[base_ - 2 + k];
+    }
+
+    bool pilot_scan(int64_t n) {
+        int slot = (int)((total_in_ / SCAN_STRIDE) % SCAN_RING);
+        int64_t u_buf = n + 1 - RobustParams::NFFT;
+        if (u_buf < 0)
+            return false;
+        int hslot = (int)((total_in_ / SCAN_STRIDE) % SCAN_HIST);
+        scan_fft(u_buf, scan_bins_[slot]);
+        scan_stamp_[slot] = total_in_;
+        for (int k = 0; k < nc_ + 4; ++k) {
+            value pk = norm(scan_bins_[slot][k]);
+            spec_avg_[k] = spec_n_ ? spec_avg_[k] + (pk - spec_avg_[k]) * value(1.0 / 64)
+                                   : pk;
+        }
+        ++spec_n_;
+        scan_best_q_[hslot] = 0;
+        scan_best_stamp_[hslot] = total_in_;
+        int prev = (slot + SCAN_RING - SCAN_PAIR) % SCAN_RING;
+        if (scan_stamp_[prev] != total_in_ - 4 * D)
+            return false;
+        value p[RobustParams::NC_MAX + 4];
+        for (int k = 0; k < nc_ + 4; ++k)
+            p[k] = abs(scan_bins_[slot][k] * conj(scan_bins_[prev][k]));
+        value gate = nc_ <= 8 ? value(RDMN_SCAN_GATE) : value(0.60);
+        value best_q = 0, best_r = value(1e9);
+        int best_j = -1, best_b = 0;
+        for (int b = -2; b <= 2; ++b) {
+            if (base_ + b < 2 ||
+                base_ + b + nc_ + 2 > RobustParams::NFFT / 2)
+                continue;
+            cmplx d[RobustParams::NC_MAX];
+            value pw = 0;
+            for (int k = 0; k < nc_; ++k) {
+                d[k] = scan_bins_[slot][2 + b + k]
+                     * conj(scan_bins_[prev][2 + b + k]);
+                pw += p[2 + b + k];
+            }
+            if (pw < value(1e-12))
+                continue;
+            value qb = 0;
+            int jb = -1;
+            for (int j = 0; j + 1 < npat_; ++j) {
+                cmplx s(0, 0);
+                for (int k = 0; k < nc_; ++k)
+                    s = s + (value)qpat_[j][k] * d[k];
+                value q = abs(s) / pw;
+                if (q > qb) {
+                    qb = q; jb = j;
+                }
+            }
+            value out = 0, inb = 0;
+            for (int k = 0; k < nc_ + 4; ++k) {
+                if (k < 2 + b || k >= 2 + b + nc_)
+                    out = std::max(out, spec_avg_[k]);
+                else
+                    inb += spec_avg_[k];
+            }
+            value rb = out / (inb / nc_ + value(1e-12));
+            // the (j, b) match is degenerate under translation: shifting the
+            // bin hypothesis shifts the MLS chip index onto another equally
+            // valid pattern (the qpat_ products are all segments of one
+            // m-sequence), so a +-1/2 bin alias scores the same q at a wrong
+            // j.  Only the band edges break the symmetry: the alias leaves
+            // pilot power in a bin outside its hypothesis band, so among
+            // gate-passing candidates the cleanest edges win.
+            bool better = qb > gate && best_q > gate ? rb < best_r
+                                                     : qb > best_q;
+            if (better) {
+                best_q = qb; best_j = jb; best_b = b; best_r = rb;
+            }
+        }
+        bool fire = false;
+        int h1 = (hslot + SCAN_HIST - SCAN_PAIR) % SCAN_HIST;
+        int h2 = (hslot + SCAN_HIST - 2 * SCAN_PAIR) % SCAN_HIST;
+        if (best_q > gate &&
+            scan_best_q_[h1] > gate &&
+            scan_best_stamp_[h1] == total_in_ - 4 * D &&
+            scan_best_j_[h1] == best_j - 1 && scan_best_b_[h1] == best_b &&
+            scan_best_q_[h2] > gate &&
+            scan_best_stamp_[h2] == total_in_ - 8 * D &&
+            scan_best_j_[h2] == best_j - 2 && scan_best_b_[h2] == best_b &&
+            best_r < value(0.8))
+            fire = pilot_enter(best_j, best_b, u_buf, best_q);
+        scan_best_j_[hslot] = best_j;
+        scan_best_b_[hslot] = best_b;
+        scan_best_q_[hslot] = best_q;
+        return fire;
+    }
+
+    bool pilot_enter(int j, int boff, int64_t u_buf, value q) {
+        using namespace robust_detail;
+        int slot = (int)((total_in_ / SCAN_STRIDE) % SCAN_RING);
+        cmplx d2[RobustParams::NC_MAX], s(0, 0);
+        for (int k = 0; k < nc_; ++k)
+            d2[k] = (value)pat_[j + 1][k]
+                  * scan_bins_[slot][2 + boff + k];
+        for (int k = 0; k + 1 < nc_; ++k)
+            s = s + d2[k + 1] * conj(d2[k]);
+        value tau = -arg(s) * RobustParams::NFFT / (2 * (value)M_PI);
+        // tau resolves timing mod NFFT, but the scan window lands anywhere
+        // in the SYM-long symbol cycle: offsets past NFFT/2 wrap and would
+        // put the row grid a full FFT length off.  Test the shifted
+        // candidates one pilot period back (fully inside the buffer) and
+        // keep the one the cyclic prefix actually correlates at.
+        int64_t u0 = u_buf + (int64_t)std::lround(tau) - RDM_WIN_BACK;
+        int64_t u = -1;
+        value best_m = -1;
+        for (int c = -1; c <= 1; ++c) {
+            int64_t uc = u0 + c * RobustParams::NFFT;
+            if (uc - 4 * D - D - RobustParams::CP < 0)
+                continue;
+            value m = abs(cp_corr(uc - 4 * D, RDM_WIN_BACK + 64, 192));
+            if (m > best_m) {
+                best_m = m;
+                u = uc;
+            }
+        }
+        if (u < 0)
+            return false;
+        if (u - D - RobustParams::CP < 0)
+            return false;
+        const value bin_step = 2 * (value)M_PI * RobustParams::SPACING
+                             / RobustParams::SAMPLE_RATE;
+        value omega0 = arg(cp_corr(u - 4 * D, RDM_WIN_BACK + 64, 192))
+                     / (value)RobustParams::NFFT;
+        {
+            int m = 1;
+            while (m < 255 && (nc_ * m) % 255 != 1)
+                ++m;
+            if (!seq_init_)
+                init_seqs();
+            int cj[3] = {j, j - m, j + m}, cb[3] = {boff, boff - 1, boff + 1};
+            value qs[3] = {-1, -1, -1};
+            bool ok = m < 255;
+            for (int c = 0; c < 3 && ok; ++c) {
+                if (cj[c] < 0 || cj[c] + 1 >= npat_ || cb[c] < -2 || cb[c] > 2 ||
+                    base_ + cb[c] < 2 ||
+                    base_ + cb[c] + nc_ + 2 > RobustParams::NFFT / 2)
+                    continue;
+                int64_t p2 = u - (int64_t)(4 * (cj[c] + 1)) * RobustParams::SYM - D;
+                if (p2 - D < 0 || p2 + RobustParams::NFFT > (int64_t)buf_.size()) {
+                    ok = false;
+                    break;
+                }
+                frame_pos_ = p2 + D;
+                omega_ = omega0 + cb[c] * bin_step;
+                base_use_ = base_;
+                cmplx bins[RobustParams::NC_MAX + 4], bins1[RobustParams::NC_MAX + 4];
+                window_fft(p2, bins);
+                window_fft(p2 - D, bins1);
+                qs[c] = probe2(bins, bins1, 0, pre_, nullptr);
+            }
+            int bi = 0;
+            for (int c = 1; c < 3; ++c)
+                if (qs[c] > qs[bi])
+                    bi = c;
+            if (ok && bi > 0 && qs[bi] >= value(RDM_ALIAS_QMIN) && qs[bi] > 2 * qs[0]) {
+                if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                          << ": pilot alias " << j << "/" << boff << " -> "
+                          << cj[bi] << "/" << cb[bi] << " (q " << qs[0]
+                          << " -> " << qs[bi] << ")" << std::endl;
+                j = cj[bi];
+                boff = cb[bi];
+            }
+        }
+        int64_t fp = u - (int64_t)(4 * (j + 1)) * RobustParams::SYM;
+        int missing = fp < 0
+            ? (int)((-fp + RobustParams::SYM - 1) / RobustParams::SYM) : 0;
+        if (missing > RobustParams::nrows(modes_[nmodes_ - 1]) / 4)
+            return false;
+        omega_ = omega0 + boff * bin_step;
+        base_use_ = base_;
+        clear_row_off();
+        entry_pr_ = j + 1;
+        entry_checked_ = false;
+        frame_pos_ = fp;
+        anchor_u_ = fp - D;
+        rows_done_ = 0;
+        tried_mask_ = 0;
+        confirmed_ = true;
+        pilot_entry_ = true;
+        trail_anchor_ = -1;
+        locked_q_ = q;
+        cand_deadline_ = -1;
+        pilot_alive_total_ = total_in_;
+        state_ = State::COLLECT;
+        ++stats_pilot_syncs;
+        ++stats_sync_count;
+        if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "") << ": Sync (PILOT j="
+                  << j + 1 << " q=" << q << " boff=" << boff
+                  << " tau=" << tau << " cfo="
+                  << omega_ * RobustParams::SAMPLE_RATE
+                     / (2 * (value)M_PI) << " Hz) t="
+                  << (double)total_in_ / RobustParams::SAMPLE_RATE << "s"
+                  << std::endl;
+        return true;
+    }
+
+    mesg_type mesg_[1 << 14];
+    code_type code_[1 << 14];
+    code_type perm_[1 << 15];
+    int8_t ber_mesg_[1 << 14];
+    int8_t ber_code_[1 << 14];
+
+    value last_snr_ = 0, last_ber_ = -1, ber_ema_ = -1;
+    RobustMode last_mode_ = RobustMode::RDM_1200;
+
+    void refresh_sums(int64_t n) {
+        P_ = cmplx(0, 0);
+        Ra_ = Rb_ = 0;
+        if (n < 2 * D)
+            return;
+        for (int64_t m = n - D + 1; m <= n; ++m) {
+            P_ = P_ + buf_[m] * conj(buf_[m - D]);
+            Rb_ += norm(buf_[m]);
+            Ra_ += norm(buf_[m - D]);
+        }
+    }
+
+    void window_fft(int64_t start, cmplx* bins) {
+        cmplx tdom[RobustParams::NFFT], fdom[RobustParams::NFFT];
+        for (int i = 0; i < RobustParams::NFFT; ++i) {
+            value ph = -omega_ * (value)(start + i - frame_pos_);
+            tdom[i] = buf_[start + i] * DSP::polar<value>(1, ph);
+        }
+        fwd_(fdom, tdom);
+        for (int k = 0; k < nc_ + 4; ++k)
+            bins[k] = fdom[base_use_ - 2 + k];
+    }
+
+    cmplx cp_corr(int64_t p2u, int margin, int len) {
+        cmplx acc(0, 0);
+        for (int s = 0; s < 2; ++s) {
+            int64_t u = p2u - (int64_t)s * D;
+            for (int j = margin; j < margin + len; ++j) {
+                int64_t a = u - RobustParams::CP + j;
+                int64_t b = u + RobustParams::NFFT - RobustParams::CP + j;
+                if (a >= 0 && b < (int64_t)buf_.size())
+                    acc = acc + buf_[b] * conj(buf_[a]);
+            }
+        }
+        return acc;
+    }
+
+    value probe2(const cmplx* bins, const cmplx* bins_b, int boff,
+                 const int8_t* known, value* tau) {
+        cmplx s(0, 0);
+        value pwr = 0;
+        for (int pass = 0; pass < 2; ++pass) {
+            const cmplx* b = pass ? bins_b : bins;
+            if (!b)
+                continue;
+            cmplx d[RobustParams::NC_MAX];
+            for (int k = 0; k < nc_; ++k)
+                d[k] = (value)known[k] * conj(rot_[k]) * b[2 + boff + k];
+            for (int k = 0; k + 1 < nc_; ++k) {
+                s = s + d[k + 1] * conj(d[k]);
+                pwr += norm(d[k]);
+            }
+            pwr += norm(d[nc_ - 1]);
+        }
+        if (tau)
+            *tau = -arg(s) * RobustParams::NFFT / (2 * (value)M_PI);
+        return abs(s) / (pwr + value(1e-9));
+    }
+
+    bool foreign_band(const cmplx* bins, const cmplx* bins1) {
+        using namespace robust_detail;
+        if (nc_ <= 8 || !seq_init_)
+            return false;
+        const int nb = 8, at = 2 + (RobustParams::NC_MAX - nb) / 2;
+        {
+            value tot = 0, band = 0;
+            for (int k = 0; k < nc_ + 4; ++k)
+                tot += norm(bins[k]);
+            for (int s = 0; s + nb <= nc_ + 4; ++s) {
+                value w = 0;
+                for (int k = 0; k < nb; ++k)
+                    w += norm(bins[s + k]);
+                if (w > band)
+                    band = w;
+            }
+            if (tot > value(1e-12) && band > value(0.75) * tot) {
+                if (debug_log)
+                    std::cerr << "RDM: narrow signal, not ours" << std::endl;
+                return true;
+            }
+        }
+        cmplx rot8[nb];
+        for (int k = 0; k < nb; ++k)
+            rot8[k] = DSP::polar<value>(1, (value)M_PI * k * k / nb);
+        value best = 0;
+        for (int boff = -2; boff <= 2; ++boff) {
+            for (int kind = 0; kind < 2; ++kind) {
+                const int8_t* known = kind ? post_ : pre_;
+                cmplx s(0, 0);
+                value pwr = 0;
+                for (int pass = 0; pass < 2; ++pass) {
+                    const cmplx* b = pass ? bins1 : bins;
+                    cmplx d[nb];
+                    for (int k = 0; k < nb; ++k)
+                        d[k] = (value)known[k] * conj(rot8[k]) * b[at + boff + k];
+                    for (int k = 0; k + 1 < nb; ++k) {
+                        s = s + d[k + 1] * conj(d[k]);
+                        pwr += norm(d[k]);
+                    }
+                    pwr += norm(d[nb - 1]);
+                }
+                best = std::max(best, abs(s) / (pwr + value(1e-9)));
+            }
+        }
+        if (best > value(0.62)) {
+            if (debug_log)
+                std::cerr << "RDM: narrow signal, not ours" << std::endl;
+            return true;
+        }
+        return false;
+    }
+
+    bool carried_by_block(const cmplx* bins, const cmplx* bins1, int boff,
+                          const int8_t* known) {
+        if (nc_ <= 8)
+            return false;
+        const int nb = 8;
+        cmplx d[2][RobustParams::NC_MAX];
+        value pw[RobustParams::NC_MAX] = {};
+        for (int pass = 0; pass < 2; ++pass) {
+            const cmplx* b = pass ? bins1 : bins;
+            for (int k = 0; k < nc_; ++k) {
+                d[pass][k] = (value)known[k] * conj(rot_[k]) * b[2 + boff + k];
+                pw[k] += norm(d[pass][k]);
+            }
+        }
+        int w0 = 0;
+        value wbest = -1;
+        for (int st = 0; st + nb <= nc_; ++st) {
+            value w = 0;
+            for (int k = 0; k < nb; ++k)
+                w += pw[st + k];
+            if (w > wbest) {
+                wbest = w;
+                w0 = st;
+            }
+        }
+        cmplx s(0, 0);
+        value pwr = 0;
+        for (int pass = 0; pass < 2; ++pass)
+            for (int k = 0; k + 1 < nc_; ++k) {
+                if ((k >= w0 && k < w0 + nb) || (k + 1 >= w0 && k + 1 < w0 + nb))
+                    continue;
+                s = s + d[pass][k + 1] * conj(d[pass][k]);
+            }
+        for (int k = 0; k < nc_; ++k)
+            if (k < w0 || k >= w0 + nb)
+                pwr += pw[k];
+        bool carried = abs(s) / (pwr + value(1e-9)) < value(0.25);
+        if (carried && debug_log)
+            std::cerr << "RDM: lock carried by one block, not ours" << std::endl;
+        return carried;
+    }
+
+    void init_seqs() {
+        using namespace robust_detail;
+        CODE::MLS pre_seq(0x331, 214), post_seq(0x331, 97);
+        for (int k = 0; k < nc_; ++k) {
+            pre_[k] = nrz(pre_seq());
+            post_[k] = nrz(post_seq());
+        }
+        seq_init_ = true;
+    }
+
+    int lock() {
+        using namespace robust_detail;
+        if (!seq_init_)
+            init_seqs();
+        frame_pos_ = peak_pos_ + 1;
+        int64_t p2u = peak_pos_ - RobustParams::NFFT + 1;
+        if (p2u - D - RobustParams::CP < 0)
+            return 0;
+
+        omega_ = arg(cp_corr(p2u, RDM_WIN_BACK + 96, 128)) / (value)RobustParams::NFFT;
+
+        cmplx bins[RobustParams::NC_MAX + 4], bins1[RobustParams::NC_MAX + 4];
+        base_use_ = base_;
+        window_fft(p2u, bins);
+        window_fft(p2u - D, bins1);
+
+        if (foreign_band(bins, bins1))
+            return 0;
+        int best_off = 0, best_kind = 1;
+        value best_q = 0, best_tau = 0;
+        for (int boff = -2; boff <= 2; ++boff) {
+            if (base_ + boff < 2 ||
+                base_ + boff + nc_ + 2 > RobustParams::NFFT / 2)
+                continue;
+            value tau = 0;
+            value q = probe2(bins, bins1, boff, pre_, &tau);
+            if (q > best_q) {
+                best_q = q; best_off = boff; best_tau = tau; best_kind = 1;
+            }
+            q = probe2(bins, bins1, boff, post_, &tau);
+            if (q > best_q) {
+                best_q = q; best_off = boff; best_tau = tau; best_kind = 2;
+            }
+        }
+        value qgate = nc_ <= 8 ? value(RDMN_QGATE) : value(0.4);
+        lock_q_ = best_q;
+        if (best_q < qgate ||
+            carried_by_block(bins, bins1, best_off,
+                             best_kind == 1 ? pre_ : post_)) {
+            ++stats_false_locks;
+            return 0;
+        }
+        const value bin_step = 2 * (value)M_PI * RobustParams::SPACING
+                             / RobustParams::SAMPLE_RATE;
+        omega_ += best_off * bin_step;
+        base_use_ = base_;
+
+        int shift = (int)std::lround(best_tau) - RDM_WIN_BACK;
+        p2u += shift;
+        if (p2u - D - RobustParams::CP < 0)
+            return 0;
+        omega_ = arg(cp_corr(p2u, RDM_WIN_BACK + 64, 192)) / (value)RobustParams::NFFT
+               + best_off * bin_step;
+
+        if (best_kind == 2) {
+            int64_t a_abs = total_in_ - (int64_t)buf_.size() + p2u;
+            if (std::llabs(a_abs - spent_anchor_) < RobustParams::SYM / 2)
+                return 0;
+        }
+        anchor_u_ = p2u;
+        if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "") << ": Sync ("
+                  << (best_kind == 1 ? "lead" : "TRAIL") << " q=" << best_q
+                  << " boff=" << best_off << " tau=" << best_tau
+                  << " cfo=" << omega_ * RobustParams::SAMPLE_RATE
+                      / (2 * (value)M_PI) << " Hz) t="
+                  << (double)total_in_ / RobustParams::SAMPLE_RATE << "s"
+                  << std::endl;
+        if (best_kind == 1) {
+            clear_row_off();
+            frame_pos_ = p2u + D;
+            rows_done_ = 0;
+            tried_mask_ = 0;
+            confirmed_ = false;
+            pilot_entry_ = false;
+            trail_anchor_ = -1;
+        }
+        return best_kind;
+    }
+
+    int row_off_[RobustParams::NROWS_MAX + 2] = {};
+
+    void clear_row_off() {
+        std::memset(row_off_, 0, sizeof(row_off_));
+    }
+
+    int64_t row_start(int row) const {
+        return frame_pos_ + (int64_t)row * RobustParams::SYM + row_off_[row];
+    }
+
+    value row_cp(int row, int off) const {
+        int64_t a0 = frame_pos_ + (int64_t)row * RobustParams::SYM + off
+                   + RDM_WIN_BACK - 256;
+        if (a0 < 0 || a0 + 192 + RobustParams::NFFT > (int64_t)buf_.size())
+            return 0;
+        cmplx acc(0, 0);
+        for (int j = 0; j < 192; ++j)
+            acc = acc + buf_[a0 + RobustParams::NFFT + j] * conj(buf_[a0 + j]);
+        return abs(acc);
+    }
+
+    value pilot_coherence(int first_row, int last_row) {
+        using namespace robust_detail;
+        CODE::MLS ps(0x163, narrow_ ? 89 : 1);
+        int p0 = (first_row + RobustParams::NS - 1) / RobustParams::NS;
+        for (int i = 0; i < p0 * nc_; ++i)
+            ps();
+        cmplx s(0, 0);
+        value pwr = 0;
+        for (int p = p0; p * RobustParams::NS < last_row; ++p) {
+            int i = p * RobustParams::NS;
+            int64_t st = row_start(i);
+            cmplx d[RobustParams::NC_MAX];
+            if (st < 0 || st + RobustParams::NFFT > (int64_t)buf_.size()) {
+                for (int k = 0; k < nc_; ++k)
+                    ps();
+                continue;
+            }
+            cmplx bins[RobustParams::NC_MAX + 4];
+            window_fft(st, bins);
+            for (int k = 0; k < nc_; ++k)
+                d[k] = (value)nrz(ps()) * bins[2 + k];
+            for (int k = 0; k + 1 < nc_; ++k) {
+                s = s + d[k + 1] * conj(d[k]);
+                pwr += norm(d[k]);
+            }
+            pwr += norm(d[nc_ - 1]);
+        }
+        return abs(s) / (pwr + value(1e-9));
+    }
+
+    int block_center(int r0, int r1, bool& valid) {
+        const int ND = 61;
+        value tm[ND], best = -1, pw0 = 0;
+        for (int di = 0; di < ND; ++di) {
+            int d = (di - ND / 2) * 16;
+            cmplx acc(0, 0);
+            for (int i = r0; i < r1; ++i) {
+                int64_t a0 = row_start(i) + RDM_WIN_BACK - 256 + d;
+                if (a0 < 0 || a0 + 192 + RobustParams::NFFT > (int64_t)buf_.size())
+                    continue;
+                for (int j = 0; j < 192; ++j) {
+                    acc = acc + buf_[a0 + RobustParams::NFFT + j] * conj(buf_[a0 + j]);
+                    if (di == ND / 2)
+                        pw0 += norm(buf_[a0 + j]);
+                }
+            }
+            tm[di] = abs(acc);
+            best = std::max(best, tm[di]);
+        }
+        int lo = -1, hi = -1;
+        for (int di = 0; di < ND; ++di)
+            if (tm[di] >= value(0.9) * best) {
+                if (lo < 0)
+                    lo = di;
+                hi = di;
+            }
+        valid = lo >= 0 && best > value(0.3) * pw0 && hi - lo <= 10;
+        return lo >= 0 ? ((lo + hi) / 2 - ND / 2) * 16 : 0;
+    }
+
+    int resolve_alias(int r0, int r1, int base_off, int lvl, value* qout) {
+        int cand[2] = {lvl, lvl > 0 ? lvl - RobustParams::SYM : lvl + RobustParams::SYM};
+        int ncand = std::abs(lvl) >= 160 ? 2 : 1;
+        int saved[RobustParams::NROWS_MAX + 2];
+        std::memcpy(saved, row_off_, sizeof(saved));
+        value bq = -1;
+        int bc = lvl;
+        for (int c = 0; c < ncand; ++c) {
+            for (int i = r0; i < r1; ++i)
+                row_off_[i] = base_off + cand[c];
+            value q = pilot_coherence(r0, r1);
+            if (q > bq + (c ? value(0.05) : value(0))) {
+                bq = q;
+                bc = cand[c];
+            }
+        }
+        std::memcpy(row_off_, saved, sizeof(saved));
+        if (qout)
+            *qout = bq;
+        return bc;
+    }
+
+    bool realign_collect() {
+        int r1 = rows_done_, r0 = std::max(0, r1 - 48);
+        bool valid = false;
+        int d = block_center(r0, r1, valid);
+        if (!valid || std::abs(d) < 128)
+            return false;
+        int old_off = row_off_[r1 - 1];
+        value q = 0;
+        int use = resolve_alias(r0, r1, old_off, d, &q);
+        if (q < value(0.3))
+            return false;
+        int rs = std::max(0, r0 - 32);
+        for (int i = rs; i < r0; ++i)
+            row_off_[i] = row_cp(i, old_off + use) > row_cp(i, old_off) ? old_off + use : old_off;
+        for (int i = r0; i <= RobustParams::NROWS_MAX + 1; ++i)
+            row_off_[i] = old_off + use;
+        for (int i = rs; i < r1; ++i) {
+            int64_t st = row_start(i);
+            if (st >= 0 && st + RobustParams::NFFT <= (int64_t)buf_.size())
+                take_row(i, st);
+        }
+        if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                  << ": collect realigned " << old_off << " -> " << old_off + use
+                  << " near row " << r0 << " (q " << q << ")" << std::endl;
+        return true;
+    }
+
+    bool pilot_sanity(int npr, float gate) {
+        using namespace robust_detail;
+        CODE::MLS ps(0x163, narrow_ ? 89 : 1);
+        cmplx s(0, 0);
+        value pwr = 0;
+        value binp[RobustParams::NC_MAX] = {};
+        for (int r = 0; r < npr; ++r) {
+            cmplx d[RobustParams::NC_MAX];
+            for (int k = 0; k < nc_; ++k) {
+                d[k] = (value)nrz(ps()) * rows_[r * RobustParams::NS][k];
+                binp[k] += norm(d[k]);
+            }
+            for (int k = 0; k + 1 < nc_; ++k) {
+                s = s + d[k + 1] * conj(d[k]);
+                pwr += norm(d[k]);
+            }
+            pwr += norm(d[nc_ - 1]);
+        }
+        value peak = 0;
+        for (int k = 0; k < nc_; ++k)
+            peak = std::max(peak, binp[k]);
+        int lit = 0;
+        for (int k = 0; k < nc_; ++k)
+            lit += binp[k] > value(0.02) * peak;
+        if (nc_ > 8 && lit < nc_ / 2)
+            return false;
+        value q = abs(s) / (pwr + value(1e-9));
+        return q >= (value)gate;
+    }
+
+    void take_row(int row, int64_t start) {
+        cmplx bins[RobustParams::NC_MAX + 4];
+        window_fft(start, bins);
+        for (int k = 0; k < nc_; ++k)
+            rows_[row][k] = bins[2 + k];
+    }
+
+    bool pilot_window_live(int last_pr, int wrows, float gate) {
+        using namespace robust_detail;
+        CODE::MLS ps(0x163, narrow_ ? 89 : 1);
+        int first = last_pr - wrows + 1;
+        if (first < 0 || last_pr >= npat_)
+            return false;
+        for (int i = 0; i < first * nc_; ++i)
+            ps();
+        cmplx s(0, 0);
+        value pwr = 0;
+        for (int p = first; p <= last_pr; ++p) {
+            cmplx d[RobustParams::NC_MAX];
+            for (int k = 0; k < nc_; ++k)
+                d[k] = (value)nrz(ps()) * rows_[p * RobustParams::NS][k];
+            for (int k = 0; k + 1 < nc_; ++k) {
+                s = s + d[k + 1] * conj(d[k]);
+                pwr += norm(d[k]);
+            }
+            pwr += norm(d[nc_ - 1]);
+        }
+        return abs(s) / (pwr + value(1e-9)) >= (value)gate;
+    }
+
+    void consume_anchor() {
+        spent_anchor_ = total_in_ - (int64_t)buf_.size() + anchor_u_;
+    }
+
+    void finish_frame(RobustMode mode) {
+        int64_t end = row_start(RobustParams::nrows(mode));
+        if (end > 0 && (size_t)end <= buf_.size())
+            buf_.erase(buf_.begin(), buf_.begin() + (size_t)end);
+        else
+            buf_.clear();
+        state_ = State::SEARCH;
+        rows_done_ = 0;
+        confirmed_ = false;
+        pilot_entry_ = false;
+        trail_anchor_ = -1;
+        refresh_sums((int64_t)buf_.size() - 1);
+    }
+
+
+
+
+
+    void finalize_collect(FrameCallback& callback) {
+        bool saved = false;
+        bool trail_saved = false;
+        if (trail_anchor_ >= 0) {
+            int64_t s_fp = frame_pos_;
+#if RDM_FIX_RESTORE
+            value s_om = omega_;
+            int s_bu = base_use_;
+#endif
+            anchor_u_ = trail_anchor_;
+            omega_ = trail_omega_;
+            saved = rescue_backward(callback);
+            if (saved) {
+                ++stats_rescues;
+                trail_saved = true;
+            } else {
+                frame_pos_ = s_fp;
+#if RDM_FIX_RESTORE
+                omega_ = s_om;
+                base_use_ = s_bu;
+                for (int i = 0; i < rows_done_; ++i) {
+                    int64_t st = row_start(i);
+                    if (st >= 0 && st + RobustParams::NFFT <= (int64_t)buf_.size())
+                        take_row(i, st);
+                }
+#endif
+            }
+            trail_anchor_ = -1;
+        }
+        for (int mi = 0; mi < nmodes_ && !saved; ++mi) {
+            RobustMode m = modes_[mi];
+            int n = RobustParams::nrows(m);
+            if (n <= rows_done_ || rows_done_ < n / 2)
+                continue;
+            for (int i = rows_done_; i < n; ++i)
+                for (int k = 0; k < nc_; ++k)
+                    rows_[i][k] = cmplx(0, 0);
+            if (try_decode(m, callback)) {
+                if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                          << ": tail rescue " << ROBUST_MODE_NAMES[(int)m]
+                          << " at " << rows_done_ << " rows" << std::endl;
+                ++stats_rescues;
+                if (pilot_alive_total_ >= 0)
+                    last_decode_total_ = pilot_alive_total_;
+                last_decode_start_ = total_in_
+                    - (int64_t)buf_.size() + frame_pos_;
+                saved = true;
+            }
+        }
+        if (saved && !trail_saved) {
+            int64_t drop = pilot_alive_total_ >= 0
+                ? pilot_alive_total_ - (total_in_ - (int64_t)buf_.size())
+                : 0;
+            drop = std::min<int64_t>(std::max<int64_t>(drop, 0),
+                                     (int64_t)buf_.size());
+            if (drop > 0)
+                buf_.erase(buf_.begin(), buf_.begin() + (size_t)drop);
+            refresh_sums((int64_t)buf_.size() - 1);
+        }
+        state_ = State::SEARCH;
+        rows_done_ = 0;
+        confirmed_ = false;
+        pilot_entry_ = false;
+        trail_anchor_ = -1;
+        
+    }
+
+
+
+
+
+    bool retry_ladder(FrameCallback& callback, RobustMode& out_mode) {
+        using namespace robust_detail;
+        const value dws = 2 * (value)M_PI * RobustParams::SPACING
+                        / RobustParams::SAMPLE_RATE / 8;
+        struct Adj { int dt; value dw; };
+        static const Adj adjs[] = {
+            {-RobustParams::SYM / 16, 0}, {RobustParams::SYM / 16, 0},
+            {-RobustParams::SYM / 8, 0}, {RobustParams::SYM / 8, 0},
+            {0, 0}, {0, 0}
+        };
+        Adj adjl[6];
+        std::memcpy(adjl, adjs, sizeof(adjl));
+        adjl[4].dw = -dws;
+        adjl[5].dw = dws;
+        int64_t s_fp = frame_pos_;
+        value s_om = omega_;
+        for (int mi = 0; mi < nmodes_; ++mi) {
+            RobustMode m = modes_[mi];
+            int n = RobustParams::nrows(m);
+            if (n != rows_done_)
+                continue;
+            for (const auto& a : adjl) {
+                frame_pos_ = s_fp + a.dt;
+                omega_ = s_om + a.dw;
+                bool fits = true;
+                for (int i = 0; i < n && fits; ++i) {
+                    int64_t st = row_start(i);
+                    if (st < 0 ||
+                        st + RobustParams::NFFT > (int64_t)buf_.size())
+                        fits = false;
+                }
+                if (!fits)
+                    continue;
+                for (int i = 0; i < n; ++i)
+                    take_row(i, row_start(i));
+                if (try_decode(m, callback)) {
+                    if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                              << ": retry ladder " << ROBUST_MODE_NAMES[(int)m]
+                              << " dt=" << a.dt << " dw=" << a.dw
+                              << std::endl;
+                    ++stats_retry_success;
+                    ++stats_ladder_rescues;
+                    out_mode = m;
+                    return true;
+                }
+            }
+        }
+        frame_pos_ = s_fp;
+        omega_ = s_om;
+        for (int i = 0; i < rows_done_; ++i) {
+            int64_t st = row_start(i);
+            if (st >= 0 && st + RobustParams::NFFT <= (int64_t)buf_.size())
+                take_row(i, st);
+        }
+        return false;
+    }
+
+    bool try_trail_rescue_at(int64_t ppos, FrameCallback& callback) {
+        using namespace robust_detail;
+        if (!seq_init_)
+            return false;
+        int64_t p2u = ppos - RobustParams::NFFT + 1;
+        if (p2u - D - RobustParams::CP < 0 ||
+            p2u + RobustParams::NFFT > (int64_t)buf_.size())
+            return false;
+        int64_t s_fp = frame_pos_, s_au = anchor_u_;
+        value s_om = omega_;
+        int s_bu = base_use_;
+        frame_pos_ = p2u;
+        omega_ = arg(cp_corr(p2u, RDM_WIN_BACK + 96, 128)) / (value)RobustParams::NFFT;
+        base_use_ = base_;
+        cmplx bins[RobustParams::NC_MAX + 4], bins1[RobustParams::NC_MAX + 4];
+        window_fft(p2u, bins);
+        window_fft(p2u - D, bins1);
+        int best_off = 0;
+        value best_q = 0, best_tau = 0;
+        bool foreign = foreign_band(bins, bins1);
+        for (int boff = -2; boff <= 2 && !foreign; ++boff) {
+            if (base_ + boff < 2 ||
+                base_ + boff + nc_ + 2 > RobustParams::NFFT / 2)
+                continue;
+            value tau = 0;
+            value q = probe2(bins, bins1, boff, post_, &tau);
+            if (q > best_q) {
+                best_q = q; best_off = boff; best_tau = tau;
+            }
+        }
+        value qgate = nc_ <= 8 ? value(RDMN_QGATE) : value(0.4);
+        bool ok = false;
+        if (best_q >= qgate &&
+            !carried_by_block(bins, bins1, best_off, post_)) {
+            const value bin_step = 2 * (value)M_PI * RobustParams::SPACING
+                                 / RobustParams::SAMPLE_RATE;
+            int shift = (int)std::lround(best_tau) - RDM_WIN_BACK;
+            p2u += shift;
+            if (p2u - D - RobustParams::CP >= 0 &&
+                p2u + RobustParams::NFFT + 192 <= (int64_t)buf_.size()) {
+                omega_ = arg(cp_corr(p2u, RDM_WIN_BACK + 64, 192)) / (value)RobustParams::NFFT
+                       + best_off * bin_step;
+                int64_t a_abs = total_in_ - (int64_t)buf_.size() + p2u;
+                if (std::llabs(a_abs - spent_anchor_) >= RobustParams::SYM / 2) {
+                    anchor_u_ = p2u;
+                    ok = rescue_backward(callback, false);
+                }
+            }
+        }
+        frame_pos_ = s_fp;
+        anchor_u_ = s_au;
+        omega_ = s_om;
+        base_use_ = s_bu;
+        return ok;
+    }
+
+    bool rescue_backward(FrameCallback callback, bool consume = true) {
+        int64_t s_fp = frame_pos_;
+        int s_off[RobustParams::NROWS_MAX + 2];
+        std::memcpy(s_off, row_off_, sizeof(s_off));
+        clear_row_off();
+        for (int mi = 0; mi < nmodes_; ++mi) {
+            RobustMode m = modes_[mi];
+            int n = RobustParams::nrows(m);
+            int64_t row0 = anchor_u_ - D - (int64_t)n * RobustParams::SYM;
+            // late join: head rows never captured decode as erasures, inside
+            // the margin the rate-1/4 mother code leaves (RDM-800 already
+            // spends half of that margin on puncturing)
+            int missing = row0 < 0
+                ? (int)((-row0 + RobustParams::SYM - 1) / RobustParams::SYM)
+                : 0;
+            if (missing > (RobustParams::sent_offset(m) ? n / 8 : n / 4))
+                continue;
+            int64_t head_abs = total_in_ - (int64_t)buf_.size()
+                             + std::max<int64_t>(row0, 0);
+            int64_t tail_abs = total_in_ - (int64_t)buf_.size()
+                             + anchor_u_ + RobustParams::NFFT;
+            if (head_abs < last_decode_total_ && tail_abs > last_decode_start_)
+                continue;
+            frame_pos_ = row0;
+#if RDM_BW_PILOT_CHECK
+            {
+                int w = std::min(n, 128);
+                if (pilot_coherence(n - w, n) < value(RDM_BW_PILOT_CHECK) / 100)
+                    continue;
+            }
+#endif
+            if (mi == 0)
+                ++stats_sync_count;
+            for (int i = 0; i < n; ++i) {
+                int64_t start = row_start(i);
+                if (start < 0) {
+                    for (int k = 0; k < nc_; ++k)
+                        rows_[i][k] = cmplx(0, 0);
+                } else {
+                    take_row(i, start);
+                }
+            }
+            if (try_decode(m, callback)) {
+                ++stats_backward_rescues;
+                if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                          << ": backward rescue " << ROBUST_MODE_NAMES[(int)m]
+                          << (missing ? " (late join)" : "")
+                          << std::endl;
+                last_decode_start_ = head_abs;
+                last_decode_total_ = total_in_ - (int64_t)buf_.size()
+                                   + anchor_u_ + RobustParams::NFFT;
+                if (consume) {
+                    int64_t end = anchor_u_ + RobustParams::NFFT;
+                    if (end > 0 && (size_t)end <= buf_.size())
+                        buf_.erase(buf_.begin(), buf_.begin() + (size_t)end);
+                    else
+                        buf_.clear();
+                    rows_done_ = 0;
+                    refresh_sums((int64_t)buf_.size() - 1);
+                } else {
+                    std::memcpy(row_off_, s_off, sizeof(s_off));
+                }
+                return true;
+            }
+        }
+        frame_pos_ = s_fp;
+        std::memcpy(row_off_, s_off, sizeof(s_off));
+        for (int i = 0; i < rows_done_; ++i) {
+            int64_t st = row_start(i);
+            if (st >= 0 && st + RobustParams::NFFT <= (int64_t)buf_.size())
+                take_row(i, st);
+        }
+        return false;
+    }
+
+    bool try_decode(RobustMode mode, FrameCallback callback, bool enhanced = false) {
+        using namespace robust_detail;
+        const int order = RobustParams::code_order(mode);
+        const int cbits = RobustParams::code_bits(mode);
+        const int nrows = RobustParams::nrows(mode);
+        const int copies = RobustParams::copies(mode);
+        const int total_bits = RobustParams::sent_bits(mode);
+
+        // thread_local instead of static
+        static thread_local cmplx chanP[RobustParams::NROWS_MAX / RobustParams::NS + 2]
+                          [RobustParams::NC_MAX];
+        static thread_local value pagree[RobustParams::NROWS_MAX / RobustParams::NS + 2];
+        int pilot_row_of[RobustParams::NROWS_MAX];
+        int npil = 0;
+        value dphi = 0;
+        static thread_local value pilot_noise[RobustParams::NROWS_MAX / RobustParams::NS + 2][RobustParams::NC_MAX];
+        auto rowrot = [&](int i) {
+            return DSP::polar<value>(1, -dphi * (value)i / RobustParams::NS);
+        };
+        int64_t s_fp = frame_pos_;
+        static thread_local int s_off[RobustParams::NROWS_MAX + 2];
+        std::memcpy(s_off, row_off_, sizeof(s_off));
+        bool shifted = false;
+        auto retake = [&]() {
+            for (int i = 0; i < nrows; ++i) {
+                int64_t st = row_start(i);
+                if (st < 0 || st + RobustParams::NFFT > (int64_t)buf_.size()) {
+                    for (int k = 0; k < nc_; ++k)
+                        rows_[i][k] = cmplx(0, 0);
+                } else {
+                    take_row(i, st);
+                }
+            }
+        };
+        bool erased = false;
+#if RDM_TIMING_TRACK
+        static thread_local bool zrow[RobustParams::NROWS_MAX];
+#endif
+        for (int i = 0; i < nrows; ++i) {
+            bool z = true;
+            for (int k = 0; k < nc_ && z; ++k)
+                z = norm(rows_[i][k]) == 0;
+#if RDM_TIMING_TRACK
+            zrow[i] = z;
+#endif
+            erased = erased || z;
+        }
+#if RDM_TIMING_TRACK
+        auto rezero = [&](const bool* keep, int bl) {
+            for (int i = 0; i < nrows; ++i)
+                if (zrow[i] && (!keep || !keep[std::min(i / bl, nrows / bl - 1)]))
+                    for (int k = 0; k < nc_; ++k)
+                        rows_[i][k] = cmplx(0, 0);
+        };
+#endif
+        auto fail = [&]() {
+            if (shifted) {
+                frame_pos_ = s_fp;
+                std::memcpy(row_off_, s_off, sizeof(s_off));
+                retake();
+#if RDM_TIMING_TRACK
+                rezero(nullptr, 1);
+#endif
+            }
+            return false;
+        };
+#if RDM_TIMING_TRACK
+        if (nrows >= 64) {
+            const int BL = 32, NBMAX = RobustParams::NROWS_MAX / 32 + 2;
+            int nb = nrows / BL;
+            int cb[NBMAX];
+            bool cv[NBMAX];
+            for (int b = 0; b < nb; ++b)
+                cb[b] = block_center(b * BL, b + 1 == nb ? nrows : (b + 1) * BL, cv[b]);
+            auto med = [&](int b0, int b1, int& cnt) {
+                int v[NBMAX], n = 0;
+                for (int b = b0; b < b1; ++b)
+                    if (cv[b])
+                        v[n++] = cb[b];
+                cnt = n;
+                if (!n)
+                    return 0;
+                std::nth_element(v, v + n / 2, v + n);
+                return v[n / 2];
+            };
+            int nvalid = 0;
+            int g = med(0, nb, nvalid);
+            if (nvalid >= 2) {
+                int maxdev = 0;
+                for (int b = 0; b < nb; ++b)
+                    if (cv[b])
+                        maxdev = std::max(maxdev, std::abs(cb[b] - g));
+                int model = 0, bs = -1, lvlL = 0, lvlR = 0;
+                double slope = 0, icpt = 0;
+                if (maxdev >= 128 && nb >= 4) {
+                    int bcost = 1 << 30;
+                    for (int sp = 1; sp < nb; ++sp) {
+                        int nl, nr;
+                        int l = med(0, sp, nl), r = med(sp, nb, nr);
+                        if (!nl || !nr)
+                            continue;
+                        int cost = 0;
+                        for (int b = 0; b < nb; ++b)
+                            if (cv[b])
+                                cost += std::abs(cb[b] - (b < sp ? l : r));
+                        if (cost < bcost) {
+                            bcost = cost; bs = sp; lvlL = l; lvlR = r;
+                        }
+                    }
+                    double sx = 0, sy = 0, sxx = 0, sxy = 0;
+                    for (int b = 0; b < nb; ++b)
+                        if (cv[b]) {
+                            sx += b; sy += cb[b]; sxx += (double)b * b; sxy += (double)b * cb[b];
+                        }
+                    double den = nvalid * sxx - sx * sx;
+                    slope = den > 0 ? (nvalid * sxy - sx * sy) / den : 0;
+                    icpt = (sy - slope * sx) / nvalid;
+                    int lcost = 0;
+                    for (int b = 0; b < nb; ++b)
+                        if (cv[b])
+                            lcost += (int)std::lround(std::fabs(cb[b] - (icpt + slope * b)));
+                    if (bs >= 0 && std::abs(lvlR - lvlL) >= 160 && bcost <= 48 * nvalid && bcost <= lcost)
+                        model = 1;
+                    else if (lcost <= 32 * nvalid && std::fabs(slope * nb) >= 96)
+                        model = 2;
+                }
+                if (model == 1) {
+                    int split = bs * BL;
+                    int useL = resolve_alias(0, split, s_off[0], lvlL, nullptr);
+                    int useR = resolve_alias(split, nrows, s_off[nrows], lvlR, nullptr);
+                    for (int i = 0; i <= nrows; ++i)
+                        row_off_[i] = s_off[i] + (i < split ? useL : useR);
+                    for (int i = std::max(0, split - BL); i < std::min(nrows, split + BL); ++i)
+                        row_off_[i] = s_off[i] + (row_cp(i, s_off[i] + useR) > row_cp(i, s_off[i] + useL) ? useR : useL);
+                    if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                              << ": timing step " << useL << " -> " << useR
+                              << " at row " << split << std::endl;
+                    retake();
+                    rezero(cv, BL);
+                    shifted = true;
+                } else if (model == 2) {
+                    for (int i = 0; i <= nrows; ++i)
+                        row_off_[i] = s_off[i] + (int)std::lround(icpt + slope * ((double)i / BL));
+                    if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                              << ": timing drift " << row_off_[0] - s_off[0] << " -> "
+                              << row_off_[nrows] - s_off[nrows] << std::endl;
+                    retake();
+                    rezero(cv, BL);
+                    shifted = true;
+                } else if (std::abs(g) >= 32) {
+                    if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                              << ": timing refine " << g << std::endl;
+                    frame_pos_ += g;
+                    retake();
+                    rezero(cv, BL);
+                    shifted = true;
+                }
+            }
+        }
+#else
+        if (!erased && nrows >= 64) {
+            value best = -1, tmet[25], pw0 = 0;
+            int lo = -1, hi = -1;
+            for (int di = 0; di < 25; ++di) {
+                int d = (di - 12) * 16;
+                cmplx acc(0, 0);
+                for (int i = 0; i < nrows; i += 2) {
+                    int64_t a0 = row_start(i) + RDM_WIN_BACK - 256 + d;
+                    if (a0 < 0 || a0 + 192 + RobustParams::NFFT > (int64_t)buf_.size())
+                        continue;
+                    for (int j = 0; j < 192; ++j) {
+                        acc = acc + buf_[a0 + RobustParams::NFFT + j] * conj(buf_[a0 + j]);
+                        if (di == 12)
+                            pw0 += norm(buf_[a0 + j]);
+                    }
+                }
+                tmet[di] = abs(acc);
+                best = std::max(best, tmet[di]);
+            }
+            for (int di = 0; di < 25; ++di)
+                if (tmet[di] >= value(0.9) * best) {
+                    if (lo < 0)
+                        lo = di;
+                    hi = di;
+                }
+            int shift = lo >= 0 ? ((lo + hi) / 2 - 12) * 16 : 0;
+            if (lo >= 0 && best > value(0.3) * pw0 && hi - lo <= 10 &&
+                std::abs(shift) >= 32) {
+                if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                          << ": timing refine " << shift << std::endl;
+                frame_pos_ += shift;
+                retake();
+                shifted = true;
+            }
+        }
+#endif
+        {
+            cmplx acc(0, 0);
+            value pw = 0;
+            for (int i = 0; i < nrows; ++i) {
+                int64_t a0 = row_start(i) + RDM_WIN_BACK - 256;
+                if (a0 < 0 || a0 + 192 + RobustParams::NFFT > (int64_t)buf_.size())
+                    continue;
+                for (int j = 0; j < 192; ++j) {
+                    acc = acc + buf_[a0 + RobustParams::NFFT + j] * conj(buf_[a0 + j]);
+                    pw += norm(buf_[a0 + j]);
+                }
+            }
+            if (pw > 0 && abs(acc) > value(0.3) * pw) {
+                const value step = 2 * (value)M_PI * RobustParams::SPACING
+                                 / RobustParams::SAMPLE_RATE;
+                value w = arg(acc) / (value)RobustParams::NFFT - omega_;
+                w -= step * std::round(w / step);
+                if (std::fabs(w) * RobustParams::SAMPLE_RATE / (2 * (value)M_PI) > 3)
+                    dphi = w * RobustParams::SYM * RobustParams::NS;
+            }
+        }
+        for (int pass = 0; pass < CFO_REFINE_PASSES + 1; ++pass) {
+        CODE::MLS pilot_seq(0x163, narrow_ ? 89 : 1);
+        npil = 0;
+        for (int i = 0; i < nrows; ++i) {
+            if (RobustParams::is_pilot_row(i)) {
+                cmplx raw[RobustParams::NC_MAX];
+                cmplx rr = rowrot(i);
+                for (int k = 0; k < nc_; ++k)
+                    raw[k] = (value)nrz(pilot_seq()) * rows_[i][k] * rr;
+                {
+                    value pw[RobustParams::NC_MAX], srt[RobustParams::NC_MAX];
+                    for (int k = 0; k < nc_; ++k)
+                        srt[k] = pw[k] = norm(raw[k]);
+                    std::nth_element(srt, srt + nc_ / 2, srt + nc_);
+                    value med = srt[nc_ / 2];
+                    for (int k = 0; k < nc_; ++k)
+                        if (pw[k] > 8 * med + value(1e-12))
+                            raw[k] = cmplx(0, 0);
+                }
+                cmplx sl(0, 0);
+                for (int k = 0; k + 1 < nc_; ++k)
+                    sl = sl + raw[k + 1] * conj(raw[k]);
+                value slope = arg(sl);
+                cmplx flat[RobustParams::NC_MAX];
+                for (int k = 0; k < nc_; ++k)
+                    flat[k] = raw[k] * DSP::polar<value>(1, -slope * k);
+                for (int k = 0; k < nc_; ++k) {
+                    cmplx acc = value(0.6) * flat[k];
+                    value w = value(0.6);
+                    if (k > 0) { acc = acc + value(0.2) * flat[k - 1]; w += value(0.2); }
+                    if (k + 1 < nc_) { acc = acc + value(0.2) * flat[k + 1]; w += value(0.2); }
+                    chanP[npil][k] = (value(1) / w) * acc * DSP::polar<value>(1, slope * k);
+                    if (enhanced) {
+                        value scale = (k == 0 || k + 1 == nc_) ? value(0.125) : value(0.24);
+                        pilot_noise[npil][k] = norm(raw[k] - chanP[npil][k]) / scale;
+                    }
+                }
+                pilot_row_of[i] = npil;
+                ++npil;
+            } else {
+                pilot_row_of[i] = npil - 1;
+            }
+        }
+        cmplx rotsum(0, 0);
+        for (int p = 0; p + 1 < npil; ++p) {
+            cmplx dot(0, 0);
+            value a2 = 0, b2 = 0;
+            for (int k = 0; k < nc_; ++k) {
+                dot = dot + chanP[p + 1][k] * conj(chanP[p][k]);
+                a2 += norm(chanP[p][k]);
+                b2 += norm(chanP[p + 1][k]);
+            }
+            rotsum = rotsum + dot;
+            value agree = abs(dot) / (std::sqrt(a2 * b2) + value(1e-12));
+            pagree[p] = agree > value(0.7) ? value(1) : agree * agree * 2;
+        }
+        pagree[npil - 1] = 1;
+        value est = arg(rotsum);
+        if (pass == CFO_REFINE_PASSES || std::fabs(est) < value(0.02))
+            break;
+        dphi += est;
+        }
+        if (debug_log && std::fabs(dphi) > value(0.02))
+            std::cerr << "RDM" << (narrow_ ? "n" : "") << ": cfo refine "
+                      << dphi / RobustParams::NS / (2 * (value)M_PI)
+                         * RobustParams::SAMPLE_RATE / RobustParams::SYM
+                      << " Hz" << std::endl;
+
+        static thread_local cmplx chanS[RobustParams::NROWS_MAX / RobustParams::NS + 2]
+                          [RobustParams::NC_MAX];
+        auto smooth = [&](int R) {
+            static const value tw1[] = {0.25, 0.5, 0.25};
+            static const value tw2[] = {0.1, 0.2, 0.4, 0.2, 0.1};
+            const value* tw = R == 1 ? tw1 : tw2;
+            for (int p = 0; p < npil; ++p) {
+                value weights[5];
+                for (int d = -R; d <= R; ++d) {
+                    int q = p + d;
+                    value weight = tw[d + R];
+                    if (enhanced && q >= 0 && q < npil && q != p) {
+                        if (std::abs(row_off_[p * RobustParams::NS] - row_off_[q * RobustParams::NS]) >= 32) {
+                            weight = 0;
+                        } else {
+                            value delta = 0, noise = 0, power = 0;
+                            for (int c = 0; c < nc_; ++c) {
+                                delta += norm(chanP[p][c] - chanP[q][c]);
+                                noise += value(0.44) * (pilot_noise[p][c] + pilot_noise[q][c]);
+                                power += norm(chanP[p][c]) + norm(chanP[q][c]);
+                            }
+                            weight *= std::min(value(1), (noise + value(0.02) * power) / (delta + value(1e-12)));
+                        }
+                    }
+                    weights[d + R] = weight;
+                }
+                for (int k = 0; k < nc_; ++k) {
+                    if (R == 0) {
+                        chanS[p][k] = chanP[p][k];
+                        continue;
+                    }
+                    cmplx acc(0, 0);
+                    value w = 0;
+                    for (int d = -R; d <= R; ++d) {
+                        int q = p + d;
+                        if (q < 0 || q >= npil)
+                            continue;
+                        value weight = weights[d + R];
+                        if (weight == 0)
+                            continue;
+                        acc = acc + weight * chanP[q][k];
+                        w += weight;
+                    }
+                    chanS[p][k] = (value(1) / w) * acc;
+                }
+            }
+        };
+        static thread_local value cgate[RobustParams::NROWS_MAX / RobustParams::NS + 2]
+                          [RobustParams::NC_MAX];
+        for (int p = 0; p + 1 < npil; ++p) {
+            value r[RobustParams::NC_MAX], srt[RobustParams::NC_MAX];
+            for (int k = 0; k < nc_; ++k) {
+                value num = norm(chanP[p][k] + chanP[p + 1][k]);
+                value den = 2 * (norm(chanP[p][k]) + norm(chanP[p + 1][k]))
+                          + value(1e-12);
+                r[k] = num / den;
+                srt[k] = r[k];
+            }
+            std::nth_element(srt, srt + nc_ / 2, srt + nc_);
+            value med = std::max(srt[nc_ / 2], value(1e-3));
+            for (int k = 0; k < nc_; ++k) {
+                value w = r[k] / med;
+                cgate[p][k] = w >= value(0.7) ? value(1)
+                            : std::max(w * w * 2, value(0.05));
+            }
+        }
+        for (int k = 0; k < nc_; ++k)
+            cgate[npil - 1][k] = 1;
+
+        static thread_local int8_t ber_reference[1 << 15];
+        bool capture_ber = true;
+        int kbit = 0;
+        value snr_acc = 0, row_pwr = 0;
+        int snr_rows = 0;
+        static thread_local int drow_start[RobustParams::NROWS_MAX];
+        static thread_local value drow_prec[RobustParams::NROWS_MAX];
+        int ndrows = 0;
+        auto demod = [&]() {
+        kbit = 0;
+        snr_acc = 0;
+        row_pwr = 0;
+        snr_rows = 0;
+        ndrows = 0;
+        for (int i = 0; i < nrows && kbit < total_bits; ++i) {
+            if (RobustParams::is_pilot_row(i))
+                continue;
+            int pa = pilot_row_of[i];
+            int pb = pa + 1 < npil ? pa + 1 : pa;
+            int row_a = pa * RobustParams::NS;
+            value t = pb > pa
+                ? (value)(i - row_a) / (value)RobustParams::NS : value(0);
+            cmplx chan[RobustParams::NC_MAX], dem[RobustParams::NC_MAX];
+            value cp_mean = 0;
+            // Catmull-Rom over four pilot rows: through a fading null the
+            // complex gain curves and its phase slews, which linear
+            // interpolation between the bracketing pilots gets wrong
+            int p0 = pa > 0 ? pa - 1 : pa;
+            int p3 = pb + 1 < npil ? pb + 1 : pb;
+            value t2 = t * t, t3 = t2 * t;
+            value w0 = value(0.5) * (2 * t2 - t3 - t);
+            value w1 = value(0.5) * (3 * t3 - 5 * t2 + 2);
+            value w2 = value(0.5) * (4 * t2 - 3 * t3 + t);
+            value w3 = value(0.5) * (t3 - t2);
+            for (int k = 0; k < nc_; ++k) {
+                chan[k] = w0 * chanS[p0][k] + w1 * chanS[pa][k]
+                        + w2 * chanS[pb][k] + w3 * chanS[p3][k];
+                cp_mean += norm(chan[k]);
+            }
+            cp_mean /= nc_;
+            value sp = 0, np = 0;
+            for (int k = 0; k < nc_; ++k) {
+                if (norm(chan[k]) > 0) {
+                    cmplx d = rows_[i][k] * rowrot(i) / chan[k];
+                    dem[k] = norm(d) < 9 ? d : cmplx(0, 0);
+                } else {
+                    dem[k] = cmplx(0, 0);
+                }
+                code_type hb[2];
+                PhaseShiftKeying<4, cmplx, code_type>::hard(hb, dem[k]);
+                cmplx hard = PhaseShiftKeying<4, cmplx, code_type>::map(hb);
+                sp += norm(hard);
+                np += norm(dem[k] - hard);
+            }
+            value precision = std::min(sp / (np + value(1e-9)), value(1023));
+            precision *= pagree[pa];
+            snr_acc += precision;
+            row_pwr += cp_mean;
+            ++snr_rows;
+            drow_start[ndrows] = kbit;
+            drow_prec[ndrows] = precision;
+            ++ndrows;
+            for (int k = 0; k < nc_ && kbit + 1 < total_bits + 2; ++k) {
+                value prec = precision;
+                if (cp_mean > 0)
+                    prec = std::min(precision * norm(chan[k]) / cp_mean, value(1023));
+                prec *= cgate[pa][k];
+                if (enhanced) {
+                    value noise = 0, weight = 0;
+                    for (int p = std::max(0, pa - 1); p <= std::min(npil - 1, pb + 1); ++p) {
+                        value w = p == pa || p == pb ? value(2) : value(1);
+                        noise += w * pilot_noise[p][k];
+                        weight += w;
+                    }
+                    value estimate = norm(chan[k]) / (noise / weight + value(1e-12));
+                    prec = std::min(prec, estimate);
+                }
+                if (capture_ber) {
+                    if (kbit < total_bits)
+                        ber_reference[kbit] = dem[k].real() < 0 ? -1 : dem[k].real() > 0 ? 1 : 0;
+                    if (kbit + 1 < total_bits)
+                        ber_reference[kbit + 1] = dem[k].imag() < 0 ? -1 : dem[k].imag() > 0 ? 1 : 0;
+                }
+                code_type b[2];
+                prec *= value(RDM_LLR_GAIN);
+                PhaseShiftKeying<4, cmplx, code_type>::soft(b, dem[k], prec);
+                if (kbit < total_bits) perm_[kbit] = b[0];
+                if (kbit + 1 < total_bits) perm_[kbit + 1] = b[1];
+                kbit += 2;
+            }
+        }
+        };
+        smooth(1);
+        demod();
+        capture_ber = false;
+        if (kbit < total_bits)
+            return fail();
+        if (row_pwr < value(1e-12))
+            return fail();
+
+        static thread_local code_type perm_raw[1 << 15];
+        std::memcpy(perm_raw, perm_, sizeof(code_type) * total_bits);
+
+        const int crc_bits = RobustParams::mesg_bits(mode);
+        const int poff = RobustParams::sent_offset(mode);
+        auto combine_shuffle = [&]() {
+            if (copies == 2) {
+                for (int i = 0; i < cbits; ++i) {
+                    int32_t v = (int32_t)perm_[i] + (int32_t)perm_[i + cbits];
+                    perm_[i] = (code_type)(v > 32767 ? 32767
+                                         : v < -32767 ? -32767 : v);
+                }
+            }
+            if (poff) {
+                static thread_local code_type full[1 << 14];
+                for (int i = 0; i < poff; ++i)
+                    full[i] = 0;        // punctured head decodes as erasures
+                std::memcpy(full + poff, perm_,
+                            sizeof(code_type) * total_bits);
+                shuffle_dec(code_, full, order);
+            } else {
+                shuffle_dec(code_, perm_, order);
+            }
+        };
+        auto scan = [&](auto& mesg, auto& dec) -> bool {
+            dec(nullptr, mesg, code_, RobustParams::frozen(mode), order);
+            for (int lane = 0;
+                 lane < std::remove_reference_t<decltype(mesg[0])>::SIZE;
+                 ++lane) {
+                crc_.reset();
+                for (int i = 0; i < crc_bits; ++i)
+                    crc_(mesg[i].v[lane] < 0);
+                if (crc_() != 0)
+                    continue;
+                bool any = false;
+                for (int i = 0; i < crc_bits && !any; ++i)
+                    any = mesg[i].v[lane] < 0;
+                if (!any)
+                    continue;
+                for (int i = 0; i < crc_bits; ++i)
+                    ber_mesg_[i] = mesg[i].v[lane] < 0 ? -1 : 1;
+                return true;
+            }
+            return false;
+        };
+
+        combine_shuffle();
+        bool decoded = scan(mesg_, polar_decoder_);
+        if (decoded && enhanced)
+            ++stats_retry_success;
+        static const int alt_radius[] = {2, 0};
+        for (int ai = 0; ai < 2 && !decoded; ++ai) {
+            smooth(alt_radius[ai]);
+            demod();
+            combine_shuffle();
+            decoded = scan(mesg_, polar_decoder_);
+            if (decoded)
+                ++stats_retry_success;
+        }
+
+        if (!decoded && ndrows >= 8) {
+            smooth(1);
+            demod();
+            std::memcpy(perm_raw, perm_, sizeof(code_type) * total_bits);
+            static thread_local int order_idx[RobustParams::NROWS_MAX];
+            for (int i = 0; i < ndrows; ++i)
+                order_idx[i] = i;
+            std::sort(order_idx, order_idx + ndrows, [&](int a, int b) {
+                return drow_prec[a] < drow_prec[b];
+            });
+            static thread_local mesg64_type mesg64[1 << 14];
+            struct Attempt { int erase_frac; bool wide; };
+            static const Attempt attempts[] = {
+                {8, false}, {4, false}, {0, true}, {4, true},
+                {-1, false}, {-1, true}};
+            for (const auto& at : attempts) {
+                int nerase;
+                if (at.erase_frac < 0) {
+                    // SNR-floor erasure: a fade null should contribute
+                    // erasures, not noise-level LLRs.  Erase every row whose
+                    // quality sits under 0.3x the frame median, however many
+                    // that is -- a multi-second fade can null more rows than
+                    // the fixed 1/8 and 1/4 fractions above can cover
+                    value med = drow_prec[order_idx[ndrows / 2]];
+                    value fl = value(0.3) * med;
+                    nerase = 0;
+                    while (nerase < ndrows &&
+                           drow_prec[order_idx[nerase]] < fl)
+                        ++nerase;
+                    if (nerase <= ndrows / 4 || nerase > ndrows * 2 / 5)
+                        continue;
+                } else {
+                    nerase = at.erase_frac ? std::max(1, ndrows / at.erase_frac) : 0;
+                }
+                std::memcpy(perm_, perm_raw, sizeof(code_type) * total_bits);
+                for (int e = 0; e < nerase; ++e) {
+                    int r = order_idx[e];
+                    int lim = std::min(drow_start[r] + 2 * nc_, total_bits);
+                    for (int b = drow_start[r]; b < lim; ++b)
+                        perm_[b] = 0;
+                }
+                combine_shuffle();
+                decoded = at.wide ? scan(mesg64, polar_decoder64_)
+                                  : scan(mesg_, polar_decoder_);
+                if (decoded) {
+                    ++stats_retry_success;
+                    break;
+                }
+            }
+        }
+        if (!decoded) {
+            fail();
+            if (!enhanced && enhanced_retry_)
+                return try_decode(mode, callback, true);
+            if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "")
+                      << ": decode failed " << ROBUST_MODE_NAMES[(int)mode]
+                      << " est SNR=" << (snr_rows > 0
+                          ? 10 * std::log10(std::max(snr_acc / snr_rows, value(0.1)))
+                          : value(0)) << " dB" << std::endl;
+            return false;
+        }
+
+        uint8_t out[RobustParams::DATA_BYTES];
+        for (int i = 0; i < RobustParams::data_bits(mode); ++i)
+            CODE::set_le_bit(out, i, ber_mesg_[i] < 0);
+
+        ber_encoder_(ber_code_, ber_mesg_, RobustParams::frozen(mode), order);
+        static thread_local int8_t ber_permuted[1 << 14];
+        shuffle_enc(ber_permuted, ber_code_, order);
+        int errs = 0, counted = 0;
+        for (int i = 0; i < total_bits; ++i) {
+            if (ber_reference[i] == 0)
+                continue;
+            ++counted;
+            if (ber_reference[i] != ber_permuted[poff + i % cbits])
+                ++errs;
+        }
+        last_ber_ = counted ? (value)errs / counted : 0;
+        ber_ema_ = ber_ema_ < 0 ? last_ber_
+                                : value(0.3) * last_ber_ + value(0.7) * ber_ema_;
+        last_snr_ = snr_rows > 0
+                  ? 10 * std::log10(std::max(snr_acc / snr_rows, value(0.1)))
+                  : 0;
+        last_mode_ = mode;
+        last_decode_start_ = total_in_ - (int64_t)buf_.size() + frame_pos_;
+        last_decode_total_ = total_in_ - (int64_t)buf_.size()
+                           + row_start(RobustParams::nrows(mode));
+
+        CODE::Xorshift32 scrambler;
+        for (int i = 0; i < RobustParams::data_bytes(mode); ++i)
+            out[i] ^= scrambler();
+
+        if (debug_log) std::cerr << "RDM" << (narrow_ ? "n" : "") << ": Decoded "
+                  << ROBUST_MODE_NAMES[(int)mode] << " SNR=" << last_snr_
+                  << " dB BER=" << 100 * last_ber_ << "%" << std::endl;
+        callback(out, RobustParams::data_bytes(mode));
+        return true;
+    }
+};

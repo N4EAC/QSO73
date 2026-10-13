@@ -1,0 +1,5 @@
+build/
+dist/
+vendor/modem73-win/*.exe
+vendor/modem73-win/*.o
+vendor/modem73-win/deps/**/*.o

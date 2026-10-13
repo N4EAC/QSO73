@@ -1,0 +1,173 @@
+CXX = g++
+CC = gcc
+UNAME_S := $(shell uname -s)
+ARCHFLAGS ?= -march=native
+CXXFLAGS = -std=c++17 -O3 $(ARCHFLAGS) -Wall -Wextra
+LDFLAGS = -lpthread -ldl -lm
+
+GIT_EXACT := $(shell git describe --tags --exact-match 2>/dev/null | sed 's/^v//')
+BASE_VERSION := 2.4.2
+VERSION ?= $(if $(GIT_EXACT),$(GIT_EXACT),$(BASE_VERSION))
+CXXFLAGS += -DMODEM73_VERSION=\"$(VERSION)\"
+
+# dependencies
+AICODIX_DSP ?= deps/aicodix/dsp
+AICODIX_CODE ?= deps/aicodix/code
+MODEM_SRC ?= deps/aicodix/modem
+
+INCLUDES = -I$(AICODIX_DSP) -I$(AICODIX_CODE) -I$(MODEM_SRC)
+
+# macOS ships a 5.x libncurses which is too old
+ifeq ($(UNAME_S),Darwin)
+    ifndef NCURSES_PREFIX
+        NCURSES_PREFIX := $(shell brew --prefix ncurses 2>/dev/null)
+    endif
+    ifneq ($(NCURSES_PREFIX),)
+        INCLUDES += -I$(NCURSES_PREFIX)/include
+        LDFLAGS += -L$(NCURSES_PREFIX)/lib
+    endif
+    NCURSES_LIBS ?= -lncurses
+else
+    NCURSES_LIBS ?= -lncurses -ltinfo
+endif
+ifdef NCURSES_SRC
+    INCLUDES += -I$(NCURSES_SRC)
+endif
+LDFLAGS += $(NCURSES_LIBS)
+
+TARGET = modem73
+
+SRCS = kiss_tnc.cc
+HDRS = kiss_tnc.hh kiss_tnc_impl.hh rx_frame_info.hh csma.hh tone_dcd.hh miniaudio_audio.hh rigctl_ptt.hh hamlib_ptt.hh modem.hh phy/mfsk_modem.hh phy/robust_modem.hh phy/common.hh tnc_ui.hh tnc_ui_state.hh control_port.hh
+OBJS = deps/miniaudio.o deps/cJSON.o
+
+# defualt to build with UI, headless operations through --headless
+UI_FLAGS = -DWITH_UI
+
+# Optional CM108 PTT support requires libhidapi-dev
+HIDAPI_CFLAGS := $(shell pkg-config --cflags hidapi-hidraw 2>/dev/null || pkg-config --cflags hidapi-libusb 2>/dev/null || pkg-config --cflags hidapi 2>/dev/null)
+HIDAPI_LIBS := $(shell pkg-config --libs hidapi-hidraw 2>/dev/null || pkg-config --libs hidapi-libusb 2>/dev/null || pkg-config --libs hidapi 2>/dev/null)
+
+ifneq ($(HIDAPI_LIBS),)
+    $(info CM108 PTT support: enabled (found hidapi))
+    CM108_FLAGS = -DWITH_CM108
+    CXXFLAGS += $(HIDAPI_CFLAGS)
+    LDFLAGS += $(HIDAPI_LIBS)
+else
+    $(info CM108 PTT support: disabled (install libhidapi-dev to enable))
+    CM108_FLAGS =
+endif
+
+# Optional direct Hamlib PTT requires libhamlib-dev
+HAMLIB_CFLAGS := $(shell pkg-config --cflags hamlib 2>/dev/null)
+HAMLIB_LIBS := $(shell pkg-config --libs hamlib 2>/dev/null)
+
+ifneq ($(HAMLIB_LIBS),)
+    $(info Hamlib PTT support: enabled (found hamlib))
+    HAMLIB_FLAGS = -DWITH_HAMLIB
+    CXXFLAGS += $(HAMLIB_CFLAGS)
+    LDFLAGS += $(HAMLIB_LIBS)
+    SRCS += hamlib_ptt.cc
+else
+    $(info Hamlib PTT support: disabled (install libhamlib-dev to enable))
+    HAMLIB_FLAGS =
+endif
+
+.PHONY: all clean install debug help
+
+all: $(TARGET)
+
+deps/miniaudio.o: deps/miniaudio.c deps/miniaudio.h
+	$(CC) -c -O2 -o $@ deps/miniaudio.c
+
+deps/cJSON.o: deps/cJSON.c deps/cJSON.h
+	$(CC) -c -O2 -o $@ deps/cJSON.c
+
+$(TARGET): $(SRCS) $(HDRS) $(OBJS)
+	$(CXX) $(CXXFLAGS) $(UI_FLAGS) $(CM108_FLAGS) $(HAMLIB_FLAGS) $(INCLUDES) -o $@ $(SRCS) $(OBJS) $(LDFLAGS)
+ifneq ($(HIDAPI_LIBS),)
+	@echo ""
+	@echo "CM108 PTT support enabled. To allow non-root access, install udev rules:"
+	@echo "  sudo cp misc/50-cm108-ptt.rules /etc/udev/rules.d/"
+	@echo "  sudo udevadm control --reload-rules"
+endif
+
+clean:
+	rm -f $(TARGET) $(OBJS) test_suite/test_fade test_suite/test_awgn test_suite/test_mfsk test_suite/test_robust test_suite/test_e2e test_suite/test_csma test_suite/wav_decode
+
+install: $(TARGET)
+	install -m 755 $(TARGET) /usr/local/bin/
+ifneq ($(HIDAPI_LIBS),)
+	@if [ -f misc/50-cm108-ptt.rules ]; then \
+		cp misc/50-cm108-ptt.rules /etc/udev/rules.d/ 2>/dev/null || \
+		echo "Note: Run 'sudo cp misc/50-cm108-ptt.rules /etc/udev/rules.d/' for CM108 udev rules"; \
+	fi
+endif
+ifneq ($(UNAME_S),Darwin)
+	@if [ -f misc/60-gpio-ptt.rules ]; then \
+		cp misc/60-gpio-ptt.rules /etc/udev/rules.d/ 2>/dev/null || \
+		echo "Note: Run 'sudo cp misc/60-gpio-ptt.rules /etc/udev/rules.d/' for GPIO PTT udev rules"; \
+	fi
+endif
+
+# Debug build
+debug: CXXFLAGS = -std=c++17 -g -O0 -Wall -Wextra -DDEBUG
+debug: $(TARGET)
+
+test_fade: test_suite/test_fade.cc modem.hh phy/common.hh
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/test_fade.cc -lm
+
+test_micro: test_suite/test_micro.cc modem.hh phy/common.hh phy/polar_tables_micro.hh
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/test_micro.cc -lm
+
+test_mfsk_snr: test_suite/test_mfsk_snr.cc phy/mfsk_modem.hh
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/test_mfsk_snr.cc -lm
+
+test_awgn: test_suite/test_awgn.cc modem.hh phy/common.hh
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/test_awgn.cc -lm
+
+test_mfsk: test_suite/test_mfsk.cc phy/mfsk_modem.hh
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/test_mfsk.cc -lm
+
+test_robust: test_suite/test_robust.cc phy/robust_modem.hh phy/common.hh
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/test_robust.cc -lm
+
+test_e2e: test_suite/test_e2e.cc modem.hh phy/robust_modem.hh phy/mfsk_modem.hh
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/test_e2e.cc -lm
+
+test_csma: test_suite/test_csma.cc csma.hh phy/robust_modem.hh miniaudio_audio.hh deps/miniaudio.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/test_csma.cc deps/miniaudio.o -lpthread -ldl -lm
+
+wav_decode: test_suite/wav_decode.cc modem.hh phy/robust_modem.hh phy/mfsk_modem.hh
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -I. -Iphy -o test_suite/$@ test_suite/wav_decode.cc -lm
+
+# Help
+help:
+	@echo "MODEM73 makefile"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all      - Build modem"
+	@echo "  clean    - Remove build"
+	@echo "  install  - Install to /usr/local/bin"
+	@echo "  debug    - Build with debug symbols"
+	@echo ""
+	@echo "Variables:"
+	@echo "  AICODIX_DSP  - Path to aicodix/dsp (default: deps/aicodix/dsp)"
+	@echo "  AICODIX_CODE - Path to aicodix/code (default: deps/aicodix/code)"
+	@echo "  MODEM_SRC    - Path to modem source (default: deps/aicodix/modem)"
+	@echo "  NCURSES_PREFIX - ncurses install prefix (macOS: default from 'brew --prefix ncurses')"
+	@echo "  NCURSES_SRC  - extra ncurses include directory"
+	@echo "  NCURSES_LIBS - ncurses link flags (default: -lncurses -ltinfo, macOS: -lncurses)"
+	@echo "  ARCHFLAGS    - CPU tuning flags (default: -march=native)"
+	@echo ""
+	@echo "Optional features:"
+	@echo "  CM108 PTT    - Requires libhidapi-dev (auto-detected)"
+	@echo "  Hamlib PTT   - Requires libhamlib-dev (auto-detected)"
+	@echo ""
+	@echo "Example:"
+	@echo "  make"
+	@echo ""
+	@echo "Runtime options:"
+	@echo "  ./modem73            # Run with UI"
+	@echo "  ./modem73  -h        # Run headless"
+	@echo "  ./modem73  --headless"
