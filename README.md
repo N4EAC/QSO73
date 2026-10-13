@@ -6,7 +6,7 @@
 
 QSO73 is an amateur-radio chat client using modem73 for HF, VHF and UHF packet communication. It offers QST broadcasts, addressed chat, shared channels with topics and heard-user lists, direct conversations, signal reports and optional beacons. Channels and direct conversations use QSO73's own radio protocol; no Internet connection or central chat server is needed.
 
-This repository is private. Its source, documentation and release downloads are available to authorized GitHub users.
+Source, documentation and release downloads are publicly available in this repository.
 
 ## Downloads
 
