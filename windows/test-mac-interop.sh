@@ -28,3 +28,9 @@ windows/build/ping-tests verify windows/build/ping-mac.txt
 
 clang++ -std=c++17 -pthread Tests/DecoderControlTests.cpp windows/build/cJSON-native.o -o build/decoder-control-tests
 build/decoder-control-tests
+
+clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/tests/psk_reporter_test.cpp windows/build/cJSON-native.o -o windows/build/psk-reporter-tests
+windows/build/psk-reporter-tests /tmp/qso73-psk-windows.bin
+swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine Sources/Protocol.swift Sources/PSKReporter.swift Tests/PSKReporterTests.swift -o build/psk-reporter-tests
+build/psk-reporter-tests /tmp/qso73-psk-mac.bin
+python3 Tests/check_psk_ipfix.py /tmp/qso73-psk-mac.bin /tmp/qso73-psk-windows.bin

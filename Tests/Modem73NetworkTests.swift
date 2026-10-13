@@ -10,7 +10,7 @@ import Foundation
             fatalError("Timed out: \(label)")
         }
         let modem = Modem(chatDefaults: nil)
-        var station = StationSettings(); station.callsign = "TEST1"
+        var station = StationSettings(); station.callsign = "TEST1"; station.locator = "AA00AA"
         var settings = Modem73Settings(); settings.embedded = false; settings.catEnabled = true
         settings.controlPort = Int(CommandLine.arguments[1])!
         settings.kissPort = Int(CommandLine.arguments[2])!
@@ -26,6 +26,7 @@ import Foundation
               modem.configDetails["slot_time_ms"] == "500", modem.recentTX.first?.size == 40,
               modem.dcdActive, !modem.pttOn, modem.snrHistory == [-8], modem.activity.first?.occupancy == 18,
               modem.recentFrames.first?.metadata["ber_pct"] == "0.6" else { fatalError("Complete activity telemetry") }
+        modem.reporter.enabled = true
         let received = Date(timeIntervalSince1970: 1700000000)
         guard modem.signalReport(for: "test2-0", now: received.addingTimeInterval(10)) == -8,
               modem.signalReport(for: "TEST3", now: received) == nil,
@@ -50,6 +51,8 @@ import Foundation
         try await awaitCondition("CAT read") { modem.frequency == "14.105000 MHz" && modem.radioMode == "USB" && modem.rigConnected }
         try await awaitCondition("power setting in watts") { modem.rigMeters["RFPOWER_SET_WATTS"] == "15" }
         guard modem.transmitMeter("SWR") == nil, modem.transmitMeter("RFPOWER_METER_WATTS") == nil else { fatalError("Idle meter floor shown as an actual TX measurement") }
+        try await awaitCondition("decoded-frame PSK report with fresh CAT") { modem.reporter.status.hasPrefix("1 queued") }
+        modem.reporter.enabled = false
         modem.tune("14.106")
         try await awaitCondition("CAT tune and reread") { modem.frequency == "14.106000 MHz" && modem.frequencyFeedback == "Radio confirmed 14.106000 MHz" }
         modem.send(String(repeating: "x", count: 201), to: "TEST2")

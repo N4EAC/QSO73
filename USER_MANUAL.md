@@ -2,13 +2,13 @@
 
 ## Amateur-radio chat with modem73
 
-**macOS 0.4.9 / Windows 0.4.9 test 5 | modem73 2.4.2**
+**macOS 0.4.10 / Windows 0.4.10 test 6 | modem73 2.4.2**
 
 Edition: October 13, 2026
 
 QSO73 combines a chat client with a local radio modem. Use it for plain packet chat, shared channels, addressed direct conversations, station beacons and channel invitations.
 
-Chapters 1-13 describe the macOS client in version 0.4.9; the channel walkthrough applies to both clients. See page 16 for Windows test 5 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
+Chapters 1-13 describe the macOS client in version 0.4.10; the channel walkthrough applies to both clients. See page 16 for Windows test 6 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
 
 ### Find what you need
 
@@ -30,6 +30,7 @@ Chapters 1-13 describe the macOS client in version 0.4.9; the channel walkthroug
 | 15 | IRC-style channel and private-chat walkthrough |
 | 16 | Windows portable testing build: setup and controls |
 | 17 | PING requests, measured replies and user controls |
+| 18 | PSK Reporter reception reporting |
 
 **Start here:** for an HF chat trial, use ROBUST / RDM-600S with the radio's USB audio input and output selected. This is a suggested starting point, not a guaranteed link setting.
 
@@ -327,7 +328,7 @@ These are two separate functions. Both use the same selected modem transmit mode
 
 Enable **Beacon** in Radio Chat and select **Interval**, or configure it in Station Settings. The selectable range is **1-60 minutes**. A valid 4-, 6- or 8-character Maidenhead grid is required.
 
-Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.9`
+Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.10`
 
 It broadcasts to QST without changing your selected conversation or draft. **Beacon Now** requests a beacon while enabled and connected; a busy modem defers the request. The first automatic beacon follows one full interval after connection or configuration.
 
@@ -468,7 +469,7 @@ Use **Modem events** in Radio Chat when diagnosing startup, device routing or co
 
 ### Basis of this manual
 
-Application behavior was checked against QSO73 0.4.9 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
+Application behavior was checked against QSO73 0.4.10 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
 
 Engine source: https://github.com/RFnexus/modem73/tree/3a37c290a5330bd95f4f283feafc5ba5605bdc52
 
@@ -511,7 +512,7 @@ All rooms share one radio frequency and transmit queue. Private chat is addresse
 
 # 15. Windows portable testing build
 
-The Windows companion is **0.4.9 test 5**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 5 adds the Decoding indicator alongside automatic chat scrolling, PING and a compact modem-style dashboard; these changes still need Windows verification.
+The Windows companion is **0.4.10 test 6**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 6 adds optional PSK Reporter uploads alongside the Decoding indicator, automatic chat scrolling, PING and a compact modem-style dashboard; these changes still need Windows verification.
 
 ### Extract and configure
 
@@ -569,3 +570,34 @@ Duplicate requests are ignored. Each source can receive at most one automatic re
 Check that the other operator uses the updated client and bundled engine, has enabled Auto PING replies and saved a valid grid. Confirm matching frequency, usable radio audio and working PTT. A busy channel, missed request, missing measurement or lost reply can prevent an answer. PING does not provide delivery guarantees or a connected session.
 
 PING uses ordinary AX.25 UI packets with QSO73 application data. Callsigns and grids are readable over the air. Keep the reply option off when you do not want automatic transmissions.
+
+
+<!-- page -->
+
+# 17. PSK Reporter reception reporting
+
+PSK Reporter is an Internet service that maps received amateur-radio signals. QSO73 can upload successful packet receptions without transmitting anything over the radio. Reporting is optional, off by default, and its setting is saved.
+
+### Enable reporting
+
+1. Enter your own valid callsign and Maidenhead grid in Station Settings. Use your receiving location; four, six or eight characters are accepted.
+2. Configure CAT and start the modem. Reporting needs recent radio frequency and mode readback, plus working receive audio. The bundled modem uses a 1500 Hz audio center.
+3. On macOS, enable **PSK Reporter reception reporting** in Station Settings. On Windows, enable **PSK Reporter** beside Grid. You can disable it while the modem is running.
+4. Receive another station's successfully decoded packet. QSO73 queues the reception and submits a batch after approximately five minutes. The reporting status shows queued, submitted or Internet error; it is outside the chat transcript.
+5. Open **https://pskreporter.info/pskmap** in your browser. Choose your callsign as receiver to see stations you heard, or as transmitter to see reports submitted by other receiving stations. Select **All modes** or **PKT**. Allow time for processing.
+
+### What is reported
+
+Each report contains the decoded sender callsign, reception time, measured frame SNR and RF center frequency. Your callsign and grid identify the receiving station, and the software field identifies QSO73 and modem73 versions. AX.25 SSIDs are removed for the callsign lookup. Chat contents, topics, private-conversation text and files are not uploaded. The sender's grid is not invented; it is omitted from this reporting profile.
+
+Reports use **PKT**, the standard packet mode label. QSO73 is identified in the software field; modem73's ROBUST, OFDM and MFSK choices are not reported as unrelated named digital modes. Reported SNR is the modem's estimate and can differ from estimates made by other decoders.
+
+### Frequency, duplicates and limits
+
+CAT frequency/mode must be no more than 30 seconds old. For USB and PKTUSB, QSO73 adds 1500 Hz to the dial; for LSB and PKTLSB, it subtracts 1500 Hz. FM uses the dial frequency. Unsupported or unavailable CAT modes are skipped. macOS external engines must confirm a 1500 Hz center in configuration. Old frame history and your own callsign are excluded.
+
+A sender/frequency pair is queued at most once per five minutes. Batches are bounded to 56 receptions, expire after 15 minutes if unsent, and use packets below 1400 bytes. Uploads run separately from CAT and radio audio, use a randomized initial delay and do not add radio airtime.
+
+UDP delivery has no acknowledgment. **Submitted** means the operating system accepted the datagram; it does not confirm that a spot appears on the map. Disabling cancels pending uploads; a datagram already submitted cannot be recalled. Check Internet access, receiver grid and fresh CAT data if reports are absent.
+
+Protocol reference: https://www.pskreporter.info/pskdev.html

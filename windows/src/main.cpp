@@ -13,6 +13,8 @@
 #include "dashboard.hpp"
 #include "ping.hpp"
 #include "protocol.hpp"
+#include "psk_reporter.hpp"
+#include "psk_transport.hpp"
 #include "rig_settings.hpp"
 #include <atomic>
 #include <chrono>
@@ -21,10 +23,11 @@
 #include <fstream>
 #include <iomanip>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.9 Windows test 5";
+constexpr const wchar_t *VERSION = L"0.4.10 Windows test 6";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -51,7 +54,8 @@ enum ControlID {
   REFRESHRIG,
   BEACONNOW,
   PING,
-  AUTOPING
+  AUTOPING,
+  PSKREPORTER
 };
 enum SettingID {
   CALL = 201,
@@ -71,7 +75,7 @@ enum SettingID {
   CATBAUD
 };
 HWND win, history, composer, statusLabel, topicLabel, frequencyLabel,
-    decodingLabel;
+    decodingLabel, reportingLabel;
 bool decodingActive = false;
 double decoderStateTime = 0;
 HANDLE activityProcess = nullptr;
@@ -90,10 +94,35 @@ struct Settings {
                                          custom;
   int drive = 25, rigPort = 4532, rigModel = 0, catBaud = 38400;
   std::string catCOM;
-  bool autoPing = false;
+  bool autoPing = false, pskReporter = false;
 };
 Settings settings;
 PingSession ping;
+PSKReportQueue pskReports;
+std::atomic<bool> pskFrequencyMode{false};
+PSKUploadWorker pskUploader;
+std::vector<PSKReception> pskBatch;
+uint64_t pskGeneration = 0;
+uint32_t pskSequence = 0, pskDomain = std::random_device{}();
+double pskSince = 0, reportedDial = 0;
+std::string reportedRadioMode, pskStatus = "PSK Reporter: off";
+bool pskSending = false;
+double epoch() {
+  return std::chrono::duration<double>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+void resetReporting() {
+  pskFrequencyMode = settings.pskReporter;
+  ++pskGeneration;
+  pskUploader.cancel();
+  pskSending = false;
+  pskBatch.clear();
+  pskReports.clear(epoch(), 300 + std::random_device{}() % 31);
+  pskStatus =
+      settings.pskReporter ? "PSK: waiting for RX / CAT" : "PSK Reporter: off";
+}
+
 std::atomic<bool> running{false}, connected{false};
 std::thread worker;
 std::mutex mutex;
@@ -226,6 +255,7 @@ void saveSettings() {
            {"catCOM", settings.catCOM}})
     cJSON_AddStringToObject(j.p, p.first, p.second.c_str());
   cJSON_AddBoolToObject(j.p, "autoPing", settings.autoPing);
+  cJSON_AddBoolToObject(j.p, "pskReporter", settings.pskReporter);
   cJSON_AddNumberToObject(j.p, "drive", settings.drive);
   cJSON_AddNumberToObject(j.p, "rigPort", settings.rigPort);
   cJSON_AddNumberToObject(j.p, "rigModel", settings.rigModel);
@@ -249,6 +279,7 @@ void loadSettings() {
   try {
     Json j(s);
     settings.autoPing = j.yes("autoPing");
+    settings.pskReporter = j.yes("pskReporter");
     settings.call = j.str("call");
     settings.grid = j.str("grid");
     settings.input = j.str("input");
@@ -279,6 +310,7 @@ void loadSettings() {
 void readSettings() {
   Settings s;
   s.autoPing = settings.autoPing;
+  s.pskReporter = settings.pskReporter;
   s.call = call(value(CALL));
   s.grid = call(value(GRID));
   s.input = value(RXDEVICE);
@@ -568,10 +600,32 @@ std::string readCATFrequency() {
       response.append(data, n);
     }
   }
+  std::string modeResponse;
+  if (pskFrequencyMode.load() && response.find('\n') != response.npos &&
+      sendAll(socket, Bytes{'m', '\n'})) {
+    while (modeResponse.size() < 512 &&
+           std::count(modeResponse.begin(), modeResponse.end(), '\n') < 2) {
+      char data[128];
+      int n = recv(socket, data, sizeof(data), 0);
+      if (n <= 0)
+        break;
+      modeResponse.append(data, n);
+    }
+  }
   closesocket(socket);
   if (response.find('\n') == response.npos)
     return "";
-  return frequencyText(response);
+  auto text = frequencyText(response);
+  if (text.empty())
+    return "";
+  Json result(cJSON_CreateObject());
+  cJSON_AddStringToObject(result.p, "text", text.c_str());
+  cJSON_AddNumberToObject(result.p, "frequency_hz", std::stod(response));
+  cJSON_AddNumberToObject(result.p, "sample_time", now());
+  cJSON_AddStringToObject(
+      result.p, "mode",
+      modeResponse.substr(0, modeResponse.find('\n')).c_str());
+  return result.dump();
 }
 void network() {
   SOCKET k = INVALID_SOCKET, c = INVALID_SOCKET;
@@ -766,6 +820,10 @@ void start() {
   engine = pi.hProcess;
   enginePID = pi.dwProcessId;
   running = true;
+  resetReporting();
+  pskSince = 0;
+  reportedDial = 0;
+  reportedRadioMode.clear();
   audioReady = false;
   decodingActive = false;
   decoderStateTime = 0;
@@ -816,6 +874,10 @@ void stop() {
     }
   }
   closeChild(rigDaemon, rigPID, CTRL_C_EVENT);
+  resetReporting();
+  pskSince = 0;
+  reportedDial = 0;
+  reportedRadioMode.clear();
   audioReady = false;
   decodingActive = false;
   decoderStateTime = 0;
@@ -1145,7 +1207,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.9-win-test5"});
+                 " QSO73 v0.4.10-win-test6"});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
     lastAuto = now();
@@ -1170,7 +1232,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 5 - ") +
+  std::string s = std::string("QSO73 Windows test 6 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1347,14 +1409,33 @@ void pollUI() {
         rawFrames = e.data;
         framesTime = now();
       } else if (e.kind == "frequency") {
-        catFrequency = e.data;
-        frequencyTime = now();
+        Json snapshot(e.data.empty() ? "{}" : e.data);
+        catFrequency = snapshot.str("text");
+        reportedDial = snapshot.num("frequency_hz");
+        reportedRadioMode = call(snapshot.str("mode"));
+        frequencyTime = snapshot.num("sample_time");
       } else if (e.kind == "event") {
         Json event(e.data);
         if (event.str("event") == "decoder_state") {
           decodingActive = event.yes("decoding");
           decoderStateTime = now();
           continue;
+        }
+        if (event.str("event") == "rx_frame" && settings.pskReporter &&
+            connected && audioReady && rigReady &&
+            event.str("callsign_source") == "ax25" &&
+            PSKReportQueue::grid(settings.grid) && now() - frequencyTime >= 0 &&
+            now() - frequencyTime <= 30) {
+          auto rf =
+              PSKReportQueue::rfFrequency(reportedDial, reportedRadioMode);
+          auto signal = cJSON_GetObjectItemCaseSensitive(event.p, "snr");
+          auto time = cJSON_GetObjectItemCaseSensitive(event.p, "time");
+          if (rf && cJSON_IsNumber(signal) && cJSON_IsNumber(time) &&
+              pskReports.add(event.str("callsign"), settings.call, *rf,
+                             signal->valuedouble, time->valuedouble, pskSince,
+                             epoch()))
+            pskStatus = "PSK: " + std::to_string(pskReports.reports.size()) +
+                        " queued (5 min)";
         }
         modemEvents.push_back(e.data);
         if (modemEvents.size() > 100)
@@ -1363,11 +1444,35 @@ void pollUI() {
         Json j(e.data);
         notify(j.yes("ok") ? "CAT response: " + j.str("response")
                            : "CAT command failed: " + e.data);
+      } else if (e.kind == "psk_result") {
+        if (e.data.rfind(std::to_string(pskGeneration) + ":", 0) != 0)
+          continue;
+        pskSending = false;
+        bool success = e.data.find(":ok") != e.data.npos;
+        if (success) {
+          pskSequence += uint32_t(pskBatch.size());
+          for (const auto &sent : pskBatch)
+            pskReports.reports.erase(
+                std::remove_if(pskReports.reports.begin(),
+                               pskReports.reports.end(),
+                               [&](const auto &r) {
+                                 return r.call == sent.call &&
+                                        r.time == sent.time &&
+                                        r.frequency == sent.frequency;
+                               }),
+                pskReports.reports.end());
+        }
+        pskBatch.clear();
+        pskReports.due = epoch() + 315;
+        pskStatus = success ? "PSK: UDP submitted (unconfirmed)"
+                            : "PSK: Internet error; retry in 5 min";
       } else if (e.kind == "error") {
         lastError = e.data;
         stop();
         notify("Disconnected: " + e.data);
       } else if (e.kind == "connected") {
+        pskSince = epoch();
+        resetReporting();
         changed = true;
         beaconDue = announcementDue = 0;
       }
@@ -1383,6 +1488,31 @@ void pollUI() {
           : catFrequency + (now() - frequencyTime > 6 ? " (last read)" : ""));
   decodingActive = decodingActive && connected && now() - decoderStateTime < 3;
   InvalidateRect(decodingLabel, nullptr, FALSE);
+  if (settings.pskReporter && connected && !pskSending) {
+    pskReports.expire(epoch());
+    if (!PSKReportQueue::grid(settings.grid))
+      pskStatus = "PSK: set a valid grid";
+    else if (!pskReports.reports.empty() && epoch() >= pskReports.due) {
+      pskBatch = pskReports.reports;
+      try {
+        auto bytes = PSKReportQueue::encode(
+            settings.call, settings.grid, "QSO73 0.4.10 / modem73 2.4.2",
+            pskBatch, pskSequence, pskDomain, uint32_t(epoch()));
+        pskSending = true;
+        pskStatus = "PSK: submitting via Internet";
+        auto token = pskGeneration;
+        pskUploader.submit(std::move(bytes), [token](bool success) {
+          post({"psk_result",
+                std::to_string(token) + (success ? ":ok" : ":error"),
+                {}});
+        });
+      } catch (const std::exception &error) {
+        pskStatus = error.what();
+        pskReports.due = epoch() + 315;
+      }
+    }
+  }
+  put(reportingLabel, pskStatus);
   publishActivity();
   if (running && rigDaemon &&
       WaitForSingleObject(rigDaemon, 0) == WAIT_OBJECT_0) {
@@ -1463,10 +1593,14 @@ void layout(int w, int h) {
 }
 void makeUI() {
   font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-  label(L"QSO73 Windows test 5", 15, 14, 275);
+  label(L"QSO73 Windows test 6", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
-  label(L"Grid", 15, 104);
+  label(L"Grid", 15, 104, 75);
+  child(L"BUTTON", L"PSK Reporter", PSKREPORTER, 100, 99, 175, 25,
+        BS_AUTOCHECKBOX | WS_TABSTOP);
+  SendMessageW(controls[PSKREPORTER], BM_SETCHECK,
+               settings.pskReporter ? BST_CHECKED : BST_UNCHECKED, 0);
   edit(GRID, 15, 125, 260, settings.grid);
   label(L"Radio RX audio input", 15, 159);
   combo(RXDEVICE, 15, 181, 260, {}, settings.input);
@@ -1493,7 +1627,7 @@ void makeUI() {
   edit(CUSTOMTEXT, 15, 600, 260, settings.custom);
   button(SAVE, L"Save settings", 15, 636, 125);
   button(START, L"Start Modem", 150, 636, 125);
-  label(L"Stop modem to change settings.", 15, 679, 275);
+  reportingLabel = child(L"STATIC", L"PSK Reporter: off", 0, 15, 676, 280, 25);
   label(L"Hamlib starts automatically with rigctl PTT.", 15, 702, 280);
   label(L"Conversation", 300, 18, 88);
   combo(ROOMS, 390, 14, 220, {"Radio Chat"}, "Radio Chat");
@@ -1662,6 +1796,12 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         MessageBoxW(win, wide(s).c_str(), L"Channel users", MB_OK);
         break;
       }
+      case PSKREPORTER:
+        settings.pskReporter = SendMessageW(controls[PSKREPORTER], BM_GETCHECK,
+                                            0, 0) == BST_CHECKED;
+        resetReporting();
+        saveSettings();
+        break;
       case AUTOPING:
         settings.autoPing =
             SendMessageW(controls[AUTOPING], BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -1798,6 +1938,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
     }
   }
   CloseHandle(job);
+  pskUploader.stop();
   WSACleanup();
   return 0;
 }

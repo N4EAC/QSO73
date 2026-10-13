@@ -169,7 +169,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.9").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.10").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
@@ -354,6 +354,7 @@ struct SettingsView: View {
                 macroSection
                 beaconSection
             }.formStyle(.grouped).disabled(modem.attached || modem.connecting || engineUpdates.busy)
+            PSKReportingControls(reporter: modem.reporter)
             HStack {
                 Button("Import Settings…") { workspace.importSettings() }.disabled(modem.attached || modem.connecting)
                 Button("Export Settings…") { workspace.exportSettings() }

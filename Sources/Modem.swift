@@ -20,6 +20,10 @@ struct RecentModemFrame: Identifiable {
 }
 
 @MainActor final class Modem: ObservableObject {
+    let reporter: PSKReporter
+    private var reportedDial: Double?
+    private var reportedCATTime = Date.distantPast
+    private var reportedModeTime = Date.distantPast
     private var ping = PingSession()
     private var pingDefaults: UserDefaults?
     @Published var autoPingReply = false { didSet { pingDefaults?.set(autoPingReply, forKey: "qso73.autoPingReply.v1"); if !autoPingReply { ping.clearPending() } } }
@@ -114,6 +118,7 @@ struct RecentModemFrame: Identifiable {
     private var pending: Request?
 
     init(chatDefaults: UserDefaults? = .standard) {
+        reporter = PSKReporter(defaults: chatDefaults)
         rooms = ChatRooms(defaults: chatDefaults)
         pingDefaults = chatDefaults; autoPingReply = chatDefaults?.bool(forKey: "qso73.autoPingReply.v1") ?? false
         beacon.canSend = { [weak self] in
@@ -234,6 +239,7 @@ struct RecentModemFrame: Identifiable {
                     if self.ready.count == 2 {
                         self.timeout?.cancel(); self.attached = true; self.connecting = false; self.status = "modem73 ready"
                         self.log("KISS and JSON control channels connected.")
+                        self.reporter.begin(call: self.station.callsign, grid: self.station.locator)
                         self.beacon.start()
                         self.channelAnnouncements.start()
                         self.request(["cmd": "get_config"], purpose: "config")
@@ -439,6 +445,7 @@ struct RecentModemFrame: Identifiable {
         case "frequency", "tuneReadback":
             let response = object["response"] as? String ?? ""
             if let hz = Double(response.trimmingCharacters(in: .whitespacesAndNewlines)), hz.isFinite, hz > 0 {
+                reportedDial = hz; reportedCATTime = Date()
                 frequency = String(format: "%.6f MHz", hz / 1_000_000)
                 if request.purpose == "tuneReadback", let expected = requestedFrequency {
                     if abs(hz - Double(expected)) <= 1 { frequencyFeedback = "Radio confirmed \(frequency)" }
@@ -446,10 +453,12 @@ struct RecentModemFrame: Identifiable {
                     requestedFrequency = nil
                 }
             } else {
+                reportedDial = nil; reportedCATTime = .distantPast
                 frequency = "Unavailable"
                 if request.purpose == "tuneReadback" { frequencyFeedback = "Frequency readback failed"; requestedFrequency = nil; error = "Cannot confirm the radio frequency: \(response)" }
             }
         case "mode":
+            reportedModeTime = Date()
             let response = object["response"] as? String ?? ""
             let modeLines = response.components(separatedBy: .newlines)
             rigMeters["BANDWIDTH"] = modeLines.count > 1 && Int(modeLines[1]) != nil ? modeLines[1] : "Unavailable"
@@ -489,6 +498,16 @@ struct RecentModemFrame: Identifiable {
             mode: object["mode"] as? String ?? "—", callsign: object["callsign"] as? String ?? "",
             snr: signal, ber: ber, metadata: Self.scalarDetails(object)), at: 0)
         if recentFrames.count > 8 { recentFrames.removeLast() }
+        if audioConnected, rigConnected, config.catEnabled,
+           config.embedded || configDetails["center_freq"].flatMap(Double.init) == 1500,
+           let measured = (object["snr"] as? NSNumber)?.doubleValue,
+           let received = (object["time"] as? NSNumber)?.doubleValue,
+           let dial = reportedDial, Date().timeIntervalSince(reportedModeTime) <= 30 {
+            reporter.receive(call: object["callsign"] as? String ?? "", source: object["callsign_source"] as? String ?? "",
+                             snr: measured, time: Date(timeIntervalSince1970: received),
+                             frequency: PSKReportQueue.rfFrequency(dial: dial, mode: radioMode), catTime: reportedCATTime)
+        }
+
     }
     func configureBeacon(_ settings: BeaconSettings, station: StationSettings, softwareVersion: String) throws {
         try beacon.configure(settings, station: station, softwareVersion: softwareVersion)
@@ -551,6 +570,7 @@ struct RecentModemFrame: Identifiable {
         if !engine.isRunning { rigController.stop() }
         audioRoute = "Audio not opened"
         attached = false; connecting = false; channel = "idle"; audioConnected = false; rigConnected = false
+        reporter.stop(); reportedDial = nil; reportedCATTime = .distantPast; reportedModeTime = .distantPast
         frequency = "—"; radioMode = "—"; snr = "—"; status = "Offline"; activeMode = "—"
         mtu = 0; configLoaded = false; fragmentation = false; rxCount = 0; txCount = 0
         rxAudioLevel = nil

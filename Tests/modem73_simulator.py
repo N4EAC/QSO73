@@ -1,3 +1,4 @@
+import time
 """Fixture for modem73's KISS/JSON APIs. No audio, RF, or external sockets."""
 import socket, threading, subprocess, pathlib, json, struct, uuid
 
@@ -35,7 +36,7 @@ def serve_control():
                     if len(buffered) < n + 4: break
                     obj = json.loads(buffered[4:4+n]); buffered = buffered[4+n:]
                     if obj['cmd'] == 'get_config':
-                        reply = {'ok': True, 'callsign': 'TEST1', 'modulation': 'RDM-600', 'payload_size': 512, 'fragmentation_enabled': True, 'carrier_threshold_db': -30, 'slot_time_ms': 500, 'csma_quiet_ms': 0, 'csma_enabled': True, 'csma_sync_only': True}
+                        reply = {'ok': True, 'callsign': 'TEST1', 'modulation': 'RDM-600', 'payload_size': 512, 'fragmentation_enabled': True, 'carrier_threshold_db': -30, 'slot_time_ms': 500, 'csma_quiet_ms': 0, 'csma_enabled': True, 'csma_sync_only': True, 'center_freq': 1500}
                     elif obj['cmd'] == 'rx_frame_history':
                         reply = {'ok': True, 'frames': [{'seq': 1, 'time': 1700000000, 'size': 64, 'mode': 'RDM-600', 'callsign': 'TEST2', 'snr': -8, 'ber_pct': 0.6}]}
                     elif obj['cmd'] == 'get_status':
@@ -55,6 +56,8 @@ def serve_control():
                             _, fraction, frequency_value, mode = cmd.split()
                             assert float(fraction) == 0.15 and int(frequency_value) in (14105000,14106000) and mode == 'USB'
                             response = 'Power mW: 15000\n'
+                            if polls == 2:
+                                sock.sendall(control_frame({'event': 'rx_frame', 'seq': 2, 'time': time.time(), 'size': 64, 'mode': 'RDM-600', 'callsign': 'TEST2', 'callsign_source': 'ax25', 'snr': -8.0, 'ber_pct': 0.6}))
                         elif cmd in ['l ALC', 'l SWR', 'l RFPOWER_METER_WATTS']:
                             assert polls == 3, 'TX-only meter read while receiving'
                             response = {'l ALC': '0.08\n', 'l SWR': '1.7\n', 'l RFPOWER_METER_WATTS': '12.5\n'}[cmd]

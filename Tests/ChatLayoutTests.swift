@@ -34,5 +34,13 @@ import AppKit
         }
         modem.audioRoute = String(repeating: "Long named radio device / route description ", count: 8)
         capture("long-route")
+        let settingsHost = NSHostingView(rootView: SettingsView().environmentObject(workspace).environmentObject(modem).environmentObject(updates).frame(width: 760, height: 760))
+        let settingsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 760), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        settingsWindow.contentView = settingsHost
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        settingsHost.layoutSubtreeIfNeeded()
+        guard settingsHost.fittingSize.height <= 761 else { fatalError("Reporting settings exceed window height") }
+        print("PASS: reporting settings fit and remain accessible while connected")
+
     }
 }
