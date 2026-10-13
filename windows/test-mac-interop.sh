@@ -25,3 +25,6 @@ windows/build/ping-tests windows/build/ping-windows.txt
 swiftc -swift-version 5 -module-cache-path build/module-cache Sources/Protocol.swift Sources/Ping.swift Tests/PingTests.swift -o build/ping-tests
 build/ping-tests windows/build/ping-windows.txt windows/build/ping-mac.txt
 windows/build/ping-tests verify windows/build/ping-mac.txt
+
+clang++ -std=c++17 -pthread Tests/DecoderControlTests.cpp windows/build/cJSON-native.o -o build/decoder-control-tests
+build/decoder-control-tests

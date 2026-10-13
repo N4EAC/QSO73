@@ -37,3 +37,7 @@ build/rig-telemetry-tests
 
 swiftc -swift-version 5 -module-cache-path build/module-cache Sources/Protocol.swift Sources/Ping.swift Tests/PingTests.swift -o build/ping-tests
 build/ping-tests
+
+clang -c vendor/modem73/deps/cJSON.c -o build/decoder-cJSON.o
+clang++ -std=c++17 -pthread Tests/DecoderControlTests.cpp build/decoder-cJSON.o -o build/decoder-control-tests
+build/decoder-control-tests

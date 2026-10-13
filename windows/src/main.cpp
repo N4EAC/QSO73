@@ -24,7 +24,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.8 Windows test 4";
+constexpr const wchar_t *VERSION = L"0.4.9 Windows test 5";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -70,7 +70,10 @@ enum SettingID {
   CATCOM,
   CATBAUD
 };
-HWND win, history, composer, statusLabel, topicLabel, frequencyLabel;
+HWND win, history, composer, statusLabel, topicLabel, frequencyLabel,
+    decodingLabel;
+bool decodingActive = false;
+double decoderStateTime = 0;
 HANDLE activityProcess = nullptr;
 std::string catFrequency;
 double frequencyTime = 0, lastActivityWrite = 0, framesTime = 0;
@@ -518,6 +521,19 @@ bool readAll(SOCKET s, char *b, size_t size) {
   }
   return true;
 }
+std::string readControl(SOCKET s) {
+  uint8_t h[4];
+  if (!readAll(s, (char *)h, 4))
+    throw std::runtime_error("Control read timed out.");
+  uint32_t count = (uint32_t(h[0]) << 24) | (uint32_t(h[1]) << 16) |
+                   (uint32_t(h[2]) << 8) | h[3];
+  if (count == 0 || count > 1048576)
+    throw std::runtime_error("Invalid control length.");
+  std::string r(count, 0);
+  if (!readAll(s, r.data(), count))
+    throw std::runtime_error("Truncated control response.");
+  return r;
+}
 std::string request(SOCKET s, const std::string &cmd) {
   auto n = uint32_t(cmd.size());
   Bytes b{uint8_t(n >> 24), uint8_t(n >> 16), uint8_t(n >> 8), uint8_t(n)};
@@ -525,16 +541,7 @@ std::string request(SOCKET s, const std::string &cmd) {
   if (!sendAll(s, b))
     throw std::runtime_error("Control socket disconnected.");
   for (int events = 0; events < 30; events++) {
-    uint8_t h[4];
-    if (!readAll(s, (char *)h, 4))
-      throw std::runtime_error("Control read timed out.");
-    uint32_t count = (uint32_t(h[0]) << 24) | (uint32_t(h[1]) << 16) |
-                     (uint32_t(h[2]) << 8) | h[3];
-    if (count == 0 || count > 1048576)
-      throw std::runtime_error("Invalid control length.");
-    std::string r(count, 0);
-    if (!readAll(s, r.data(), count))
-      throw std::runtime_error("Truncated control response.");
+    auto r = readControl(s);
     Json j(r);
     if (!j.str("event").empty()) {
       post({"event", r, {}});
@@ -622,8 +629,13 @@ void network() {
       fd_set fd;
       FD_ZERO(&fd);
       FD_SET(k, &fd);
+      FD_SET(c, &fd);
       timeval tv{0, 100000};
       if (select(0, &fd, nullptr, nullptr, &tv) > 0) {
+        if (FD_ISSET(c, &fd))
+          post({"event", readControl(c), {}});
+        if (!FD_ISSET(k, &fd))
+          continue;
         uint8_t b[8192];
         int n = recv(k, (char *)b, sizeof(b), 0);
         if (n <= 0)
@@ -755,6 +767,8 @@ void start() {
   enginePID = pi.dwProcessId;
   running = true;
   audioReady = false;
+  decodingActive = false;
+  decoderStateTime = 0;
   statusTime = 0;
   lastError.clear();
   rawStatus.clear();
@@ -803,6 +817,8 @@ void stop() {
   }
   closeChild(rigDaemon, rigPID, CTRL_C_EVENT);
   audioReady = false;
+  decodingActive = false;
+  decoderStateTime = 0;
   statusTime = 0;
   beaconDue = announcementDue = 0;
   beaconPending = false;
@@ -1129,7 +1145,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.8-win-test4"});
+                 " QSO73 v0.4.9-win-test5"});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
     lastAuto = now();
@@ -1154,7 +1170,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 4 - ") +
+  std::string s = std::string("QSO73 Windows test 5 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1334,6 +1350,12 @@ void pollUI() {
         catFrequency = e.data;
         frequencyTime = now();
       } else if (e.kind == "event") {
+        Json event(e.data);
+        if (event.str("event") == "decoder_state") {
+          decodingActive = event.yes("decoding");
+          decoderStateTime = now();
+          continue;
+        }
         modemEvents.push_back(e.data);
         if (modemEvents.size() > 100)
           modemEvents.pop_front();
@@ -1359,6 +1381,8 @@ void pollUI() {
       catFrequency.empty()
           ? "CAT: unavailable"
           : catFrequency + (now() - frequencyTime > 6 ? " (last read)" : ""));
+  decodingActive = decodingActive && connected && now() - decoderStateTime < 3;
+  InvalidateRect(decodingLabel, nullptr, FALSE);
   publishActivity();
   if (running && rigDaemon &&
       WaitForSingleObject(rigDaemon, 0) == WAIT_OBJECT_0) {
@@ -1431,14 +1455,15 @@ void layout(int w, int h) {
   MoveWindow(controls[NEWROOM], w - 390, 14, 200, 25, TRUE);
   MoveWindow(controls[JOIN], w - 185, 14, 170, 27, TRUE);
   MoveWindow(topicLabel, left, 49, right - 240, 22, TRUE);
-  MoveWindow(frequencyLabel, 778, 86, std::max(100, w - 793), 24, TRUE);
+  MoveWindow(decodingLabel, w - 95, 86, 80, 22, TRUE);
+  MoveWindow(frequencyLabel, 778, 86, std::max(100, w - 888), 24, TRUE);
   MoveWindow(controls[TOPIC], w - 235, 45, 70, 27, TRUE);
   MoveWindow(controls[USERS], w - 160, 45, 70, 27, TRUE);
   MoveWindow(controls[LEAVE], w - 85, 45, 70, 27, TRUE);
 }
 void makeUI() {
   font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-  label(L"QSO73 Windows test 4", 15, 14, 275);
+  label(L"QSO73 Windows test 5", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104);
@@ -1485,6 +1510,7 @@ void makeUI() {
   edit(FREQUENCY, 528, 80, 105, "");
   SendMessageW(controls[FREQUENCY], EM_SETCUEBANNER, 0, (LPARAM)L"MHz");
   button(SETFREQ, L"Set Frequency", 640, 80, 125);
+  decodingLabel = child(L"STATIC", L"Decoding", SS_OWNERDRAW, 1010, 86, 80, 22);
   frequencyLabel = child(L"STATIC", L"CAT: unavailable", 0, 778, 86, 250, 24);
   child(L"BUTTON", L"Beacon", BEACON, 300, 120, 85, 25,
         BS_AUTOCHECKBOX | WS_TABSTOP);
@@ -1515,10 +1541,28 @@ void makeUI() {
   button(ACTIVITY, L"Modem Activity", 870, 627, 145);
   statusLabel = child(L"STATIC", L"Offline", 0, 300, 667, 680, 32);
   rebuildRooms();
-  SetTimer(win, 1, 500, nullptr);
+  SetTimer(win, 1, 200, nullptr);
   SetTimer(win, 2, 100, nullptr);
 }
 LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+  if (m == WM_DRAWITEM &&
+      reinterpret_cast<DRAWITEMSTRUCT *>(l)->hwndItem == decodingLabel) {
+    auto item = reinterpret_cast<DRAWITEMSTRUCT *>(l);
+    const bool active = decodingActive && connected;
+    HBRUSH brush =
+        CreateSolidBrush(active ? RGB(32, 145, 65) : RGB(220, 220, 220));
+    FillRect(item->hDC, &item->rcItem, brush);
+    DeleteObject(brush);
+    SetBkMode(item->hDC, TRANSPARENT);
+    SetTextColor(item->hDC, active ? RGB(255, 255, 255) : RGB(90, 90, 90));
+    auto font =
+        reinterpret_cast<HFONT>(SendMessageW(decodingLabel, WM_GETFONT, 0, 0));
+    auto old = SelectObject(item->hDC, font);
+    DrawTextW(item->hDC, L"Decoding", -1, &item->rcItem,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(item->hDC, old);
+    return TRUE;
+  }
   if (m == WM_CREATE) {
     win = h;
     makeUI();

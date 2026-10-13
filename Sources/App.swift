@@ -169,7 +169,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.8").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.9").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
@@ -250,6 +250,13 @@ struct ChatView: View {
             HStack(spacing: 16) {
                 Label(modem.audioConnected ? "Audio ready" : "Audio offline", systemImage: "waveform")
                 Text("RX \(modem.rxCount) · TX \(modem.txCount)")
+                Text("Decoding")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(modem.decoding && modem.attached ? Color.white : Color.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(modem.decoding && modem.attached ? Color.green.opacity(0.8) : Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                    .help("Green while modem73 is receiving a frame for decoding. Gray when idle. A green indication does not guarantee a successfully decoded message.")
+
                 Spacer()
                 Label(modem.frequency + " · " + modem.radioMode, systemImage: "radio")
                 if workspace.modemSettings.catEnabled {

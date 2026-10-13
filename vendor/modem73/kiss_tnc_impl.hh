@@ -1771,6 +1771,7 @@ private:
 
                 if (blanking) {
                     was_blanking = true;
+                    telemetry_decoding_ = false;
                     dcd_active_ = false;
                 } else {
                     if (decoder_reconfig_pending_.exchange(false)) {
@@ -1876,6 +1877,13 @@ private:
                     }
 
                     tnow = steady_now_ms();
+                    // Decoder reception excludes tone sensing and CSMA lockout.
+                    telemetry_decoding_ = (ofdm_rx && decoder_->in_frame()) ||
+                        (robust_rx && (robust_decoder_->carrier_active() ||
+                                       robust_decoder_n_->carrier_active())) ||
+                        (mfsk_rx && (mfsk_decoders_[0]->in_frame() ||
+                                     mfsk_decoders_[1]->in_frame() ||
+                                     mfsk_decoders_[2]->in_frame()));
                     // sync DCD: OFDM meta-validated in_frame and pilot-confirmed
                     // RDM collects only; MFSK syncs are too loose to gate TX on
                     dcd_active_ = (ofdm_rx && decoder_->in_frame()) ||
@@ -2190,6 +2198,7 @@ private:
     std::atomic<int> telemetry_rank_{-1}, telemetry_rank_n_{0}, telemetry_window_{0}, telemetry_quiet_{0};
     std::atomic<int> telemetry_occupancy_{0};
     std::atomic<bool> telemetry_dcd_{false};
+    std::atomic<bool> telemetry_decoding_{false};
     int64_t last_id_ms_ = -1000000;
     int64_t last_dcd_ms_ = -1000000;
     int64_t pending_unattrib_ms_ = -1;
@@ -2633,6 +2642,10 @@ public:
     float get_audio_level() {
         if (!audio_ || !audio_->capture_alive()) return -100.0f;
         return audio_->instant_level_db(100);
+    }
+
+    bool is_decoding() const {
+        return telemetry_decoding_.load() && !is_transmitting() && is_audio_healthy();
     }
 
     bool is_audio_healthy() const {

@@ -71,6 +71,8 @@ struct RecentModemFrame: Identifiable {
     private let transmitMeters = ["RFPOWER_METER_WATTS", "SWR", "ALC"]
     @Published var recentTX: [RecentModemFrame] = []
     @Published var snrHistory: [Double] = []
+    @Published var decoding = false
+    private var decoderStateTime = Date.distantPast
     @Published var dcdActive = false
     @Published var pttOn = false
     @Published var txQueue = 0
@@ -241,6 +243,7 @@ struct RecentModemFrame: Identifiable {
                             while !Task.isCancelled {
                                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                                 guard !Task.isCancelled, let self, self.generation == current else { return }
+                                if Date().timeIntervalSince(self.decoderStateTime) > 3 { self.decoding = false }
                                 self.sendPingReply()
                                 if self.pending == nil && self.requests.isEmpty {
                                     self.request(["cmd": "get_status"], purpose: "status")
@@ -333,6 +336,10 @@ struct RecentModemFrame: Identifiable {
     }
     private func handleControl(_ object: [String: Any]) {
         if let event = object["event"] as? String {
+            if event == "decoder_state" {
+                decoding = object["decoding"] as? Bool ?? false
+                decoderStateTime = Date()
+            }
             if event == "rx_frame" { recordFrame(object) }
             if event == "config_changed" { request(["cmd": "get_config"], purpose: "config") }
             return
@@ -381,6 +388,7 @@ struct RecentModemFrame: Identifiable {
         case "status":
             statusDetails = Self.scalarDetails(object)
             statusDetails["recent_tx_frames_available"] = object["recent_tx_frames"] is [[String: Any]] ? "1" : "0"
+            if Date().timeIntervalSince(decoderStateTime) > 3 { decoding = false }
             dcdActive = object["dcd_active"] as? Bool ?? false
             pttOn = object["ptt_on"] as? Bool ?? false
             if let frames = object["recent_tx_frames"] as? [[String: Any]] {
@@ -548,7 +556,7 @@ struct RecentModemFrame: Identifiable {
         rxAudioLevel = nil
         requestedFrequency = nil; frequencyFeedback = ""
         activity = []; recentFrames = []; recentTX = []; snrHistory = []; lastFrameSequence = 0
-        statusDetails = [:]; configDetails = [:]; rigMeters = [:]; rigMeterIndex = 0; dcdActive = false; pttOn = false
+        statusDetails = [:]; configDetails = [:]; rigMeters = [:]; rigMeterIndex = 0; dcdActive = false; pttOn = false; decoding = false; decoderStateTime = .distantPast
         radioPTT = nil; radioPTTTime = .distantPast; transmitMeterTimes = [:]
         txQueue = 0; rxErrors = 0; occupancy = 0; clients = 0; lastBER = nil
         carrierThreshold = nil; csmaDescription = "—"; captureRoute = "Audio not opened"; audioRoute = "Audio not opened"

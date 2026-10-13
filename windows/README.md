@@ -1,10 +1,10 @@
 # QSO73 Windows portable test client
 
-**Version 0.4.8 Windows test 4 — Windows 10 (1903 or later) / Windows 11, x64.**
+**Version 0.4.9 Windows test 5 — Windows 10 (1903 or later) / Windows 11, x64.**
 
-This is an early Windows companion for testing with QSO73 0.4.8 on macOS. It implements the same QSO73 v1 channel/direct protocol and bundles the official Windows modem73 engine. Extract the **entire folder** to a writable directory and run **QSO73.exe**. No installer, Python, MSYS2 or WSL is required by the tester. Keep both the `engine` and `hamlib` folders beside the client. Hamlib 4.7.2 and all its runtime DLLs are included; no separate Hamlib installation or PATH changes are needed. Settings and logs stay inside the portable folder. Running inside the ZIP is not supported.
+This is an early Windows companion for testing with QSO73 0.4.9 on macOS. It implements the same QSO73 v1 channel/direct protocol and bundles the official Windows modem73 engine. Extract the **entire folder** to a writable directory and run **QSO73.exe**. No installer, Python, MSYS2 or WSL is required by the tester. Keep both the `engine` and `hamlib` folders beside the client. Hamlib 4.7.2 and all its runtime DLLs are included; no separate Hamlib installation or PATH changes are needed. Settings and logs stay inside the portable folder. Running inside the ZIP is not supported.
 
-The Windows executable has been cross-compiled on macOS. Packet compatibility and the modem DSP have local automated checks. A tester has reported successful radio connection and over-the-air message transmission with Windows test 2. The PING controls, improved activity dashboard and automatic chat scrolling in test 4 still require verification on Windows hardware. The upstream Windows modem port is itself experimental. This package is unsigned.
+The Windows executable has been cross-compiled on macOS. Packet compatibility and the modem DSP have local automated checks. A tester has reported successful radio connection and over-the-air message transmission with Windows test 2. The PING controls, improved activity dashboard and automatic chat scrolling in test 5 still require verification on Windows hardware. The upstream Windows modem port is itself experimental. This package is unsigned.
 
 ## Prepare the Windows station
 
@@ -61,7 +61,7 @@ Only the **builder** needs MSYS2. The recipient of a built ZIP does not.
 1. Install official MSYS2, then open **MSYS2 MinGW64**.
 2. Install the build tools: `pacman -S --needed make zip unzip mingw-w64-x86_64-gcc`.
 3. From Windows PowerShell, run `./Build-Windows.ps1` in this source folder. If MSYS2 is elsewhere, use `./Build-Windows.ps1 -MsysRoot 'D:\msys64'`.
-4. The script builds the client and bundled engine and creates **dist/QSO73-0.4.8-windows-x64-test4.zip**. Share that ZIP, not just QSO73.exe.
+4. The script builds the client and bundled engine and creates **dist/QSO73-0.4.9-windows-x64-test5.zip**. Share that ZIP, not just QSO73.exe.
 
 Alternatively, in MinGW64, run `CXX=g++ CC=gcc WINDRES=windres ./build.sh`. On macOS/Linux with mingw-w64 available, run `./build.sh`. The source dependencies are vendored and pinned; no engine or Hamlib downloads occur during a build. `build.sh` can be rerun after editing the client. The root Mac build is unchanged.
 
@@ -79,8 +79,10 @@ Hamlib source and notices are included under **hamlib/source/** and **hamlib/** 
 
 ## PING
 
-Click PING to request a measured signal report from To in Radio Chat. QST requests replies from listening stations; a direct conversation targets its callsign and a channel uses QST. Requests and replies appear in Radio Chat. Both stations need macOS 0.4.8 or Windows 0.4.8 test 4 with the current bundled engines.
+Click PING to request a measured signal report from To in Radio Chat. QST requests replies from listening stations; a direct conversation targets its callsign and a channel uses QST. Requests and replies appear in Radio Chat. Both stations need macOS 0.4.8 or later or Windows 0.4.8 test 4 or later with the current bundled engines.
 
 Enable **Auto PING replies** at stations that should respond. This saved option is off by default. Replies contain the responder's callsign, saved grid and the measured SNR of the decoded request, matched by source and unique application ID. No matching measurement or invalid grid means no reply. The SNR is how the other station heard your request. Replies wait for idle audio/PTT and an empty queue, with at least two seconds for metadata and thirty seconds maximum waiting time. They share automatic-traffic spacing with beacons/invitations. Duplicate requests are ignored, each source is limited to one automatic reply per thirty seconds, and replies do not trigger replies. Disabling the option or stopping the modem clears pending replies; submitted packets cannot be withdrawn.
 
 Incoming and submitted messages now scroll their selected conversation to the end. The console dashboard is sampled telemetry, rather than an FFT waterfall. Quiet/window timing describes the last CSMA acquisition; unavailable values are shown as --. TX counts and recent TX rows use engine transmission completion rather than socket submission.
+
+The small Decoding rectangle beside the frequency turns green during modem frame reception and gray when idle, transmitting or disconnected. Green indicates a decoding attempt, not a guaranteed valid message. It requires the current bundled engine.

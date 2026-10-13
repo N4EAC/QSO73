@@ -30,3 +30,7 @@ Status history sampling can miss sub-second activity. The activity display is no
 The headless engine extension exposes gate telemetry and an eight-record encoded-TX history over get_status. It does not change waveform generation, PTT behavior or CSMA decisions.
 
 QSO73 0.4.6 separates the power-control setting from transmit meter readings. Actual radio PTT is queried through rigctld, independently of modem PTT; live RF output, SWR and ALC are prioritized during TX and invalidated in RX or after six seconds without a fresh sample. The power setting uses Hamlib power2mW conversion with current frequency/mode, with a percentage fallback when unavailable. On the development FT-710, read-only CAT returned PTT off, RFPOWER 0.15, output meter 5 W and SWR 1; power2mW returned 15000 mW. Idle meter floors are no longer displayed as actual transmitted measurements.
+
+## Decoder indicator
+
+The compact Decoding rectangle uses the bundled engine’s `decoder_state` event, refreshed every 200 ms. `decoding` is also present in get_status. OFDM uses in_frame(), ROBUST uses confirmed carrier_active(), and MFSK uses the active decoder’s in_frame(). Tone sensing and CSMA lockout alone do not light the rectangle. Local TX and unhealthy audio suppress it; disconnect or stale events clear it. A frame attempt can still fail CRC or decoding.

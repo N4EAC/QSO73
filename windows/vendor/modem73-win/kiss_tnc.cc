@@ -1724,6 +1724,7 @@ private:
 
                 if (blanking) {
                     was_blanking = true;
+                    telemetry_decoding_ = false;
                     dcd_active_ = false;telemetry_dcd_=false;
                 } else {
                     if (decoder_reconfig_pending_.exchange(false)) {
@@ -1829,6 +1830,13 @@ private:
                     }
 
                     tnow = steady_now_ms();
+                    // Decoder reception excludes tone sensing and CSMA lockout.
+                    telemetry_decoding_ = (ofdm_rx && decoder_->in_frame()) ||
+                        (robust_rx && (robust_decoder_->carrier_active() ||
+                                       robust_decoder_n_->carrier_active())) ||
+                        (mfsk_rx && (mfsk_decoders_[0]->in_frame() ||
+                                     mfsk_decoders_[1]->in_frame() ||
+                                     mfsk_decoders_[2]->in_frame()));
                     // sync DCD: OFDM meta-validated in_frame and pilot-confirmed
                     // RDM collects only; MFSK syncs are too loose to gate TX on
                     dcd_active_ = (ofdm_rx && decoder_->in_frame()) ||
@@ -2320,6 +2328,7 @@ private:
     std::deque<RxFrameInfo> tx_history_;
     std::atomic<int> telemetry_window_ms_{0}, telemetry_quiet_ms_{0};
     std::atomic<bool> telemetry_dcd_{false};
+    std::atomic<bool> telemetry_decoding_{false};
     
 public:
     float alc_auto_tune() {
@@ -2717,6 +2726,10 @@ public:
     float get_audio_level() {
         if (!audio_ || !audio_->capture_alive()) return -100.0f;
         return audio_->instant_level_db(100);
+    }
+
+    bool is_decoding() const {
+        return telemetry_decoding_.load() && !is_transmitting() && is_audio_healthy();
     }
 
     bool is_audio_healthy() const {
@@ -3974,6 +3987,7 @@ int main(int argc, char** argv) {
         if (config.control_port > 0) {
             ControlPort::TNCInterface ctrl_iface;
 
+            ctrl_iface.is_decoding = [&tnc]() { return tnc.is_decoding(); };
             ctrl_iface.get_status = [&tnc, &modem_airtime_s, &modem_mtu_bytes]() -> cJSON* {
                 cJSON* j = cJSON_CreateObject();
                 auto stats = tnc.get_decoder_stats();
@@ -4012,6 +4026,7 @@ int main(int argc, char** argv) {
                 cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
                 cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
                 cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
+                cJSON_AddBoolToObject(j, "decoding", tnc.is_decoding());
                 auto tx_history=cJSON_AddArrayToObject(j,"tx_history");
                 auto tick=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
                 for(const auto& record:tnc.tx_frame_history()) {auto item=cJSON_CreateObject();cJSON_AddNumberToObject(item,"time",record.time);cJSON_AddNumberToObject(item,"age_s",double(tick-record.steady_ms)/1000);cJSON_AddNumberToObject(item,"size",record.size);cJSON_AddStringToObject(item,"mode",record.mode.c_str());cJSON_AddItemToArray(tx_history,item);}

@@ -16,6 +16,7 @@ import Foundation
         settings.kissPort = Int(CommandLine.arguments[2])!
         modem.attachExternal(station, modem: settings)
         try await awaitCondition("audio and modem configuration") { modem.attached && modem.audioConnected && modem.activeMode == "RDM-600" }
+        try await awaitCondition("active decoder event") { modem.decoding }
         guard modem.rxAudioLevel == -32.5 else { fatalError("RX audio level did not reach the client") }
         try await awaitCondition("modem activity and frame history") { !modem.activity.isEmpty && modem.recentFrames.count == 1 }
         guard modem.txQueue == 3, modem.rxErrors == 4, modem.occupancy == 12, modem.clients == 1,
@@ -62,12 +63,14 @@ import Foundation
         try await awaitCondition("actual-radio TX meters") { modem.transmitMeter("SWR") == "1.70" && modem.transmitMeter("RFPOWER_METER_WATTS") == "12.50" && modem.transmitMeter("ALC") == "0.08" }
         guard modem.transmitMeter("SWR", now: Date().addingTimeInterval(7)) == nil else { fatalError("Stale TX reading shown as live") }
         try await awaitCondition("TX readings clear when radio returns to RX") { modem.radioPTT == false && modem.transmitMeter("SWR") == nil && modem.transmitMeter("RFPOWER_METER_WATTS") == nil }
+        guard !modem.decoding && modem.dcdActive && modem.audioConnected else { fatalError("Busy audio must not imply active decoding") }
         // Server closes after the RX/TX/RX fixture sequence.
         try await awaitCondition("remote channel closure") { !modem.attached && modem.error != nil }
         modem.detach()
         guard !modem.attached, !modem.connecting, modem.status == "Offline" else { fatalError("Detach state") }
         guard modem.statusDetails.isEmpty, modem.configDetails.isEmpty, modem.rigMeters.isEmpty, modem.recentTX.isEmpty, modem.snrHistory.isEmpty else { fatalError("Stale telemetry after disconnect") }
         guard modem.activity.isEmpty, modem.recentFrames.isEmpty else { fatalError("Stale activity after disconnect") }
+        guard !modem.decoding else { fatalError("Stale decoding indicator after disconnect") }
         guard modem.rxAudioLevel == nil else { fatalError("Stale RX audio level after disconnect") }
         let historyCount = modem.entries.count
         modem.callsigns.clear()

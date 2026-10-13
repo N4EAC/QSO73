@@ -26,6 +26,12 @@ import AppKit
         modem.audioRoute = "USB Audio Device (device 44100 Hz, modem 48000 Hz; CoreAudio route verified)"
         modem.rxAudioLevel = -38; modem.activeMode = "RDM-600S"; modem.frequency = "7.105000 MHz"; modem.radioMode = "PKTUSB"
         capture("connected")
+        modem.decoding = true
+        capture("decoding")
+        if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/qso73-decoding-layout.png"))
+        }
         modem.audioRoute = String(repeating: "Long named radio device / route description ", count: 8)
         capture("long-route")
     }

@@ -2,13 +2,13 @@
 
 ## Amateur-radio chat with modem73
 
-**macOS 0.4.8 / Windows 0.4.8 test 4 | modem73 2.4.2**
+**macOS 0.4.9 / Windows 0.4.9 test 5 | modem73 2.4.2**
 
 Edition: October 13, 2026
 
 QSO73 combines a chat client with a local radio modem. Use it for plain packet chat, shared channels, addressed direct conversations, station beacons and channel invitations.
 
-Chapters 1-13 describe the macOS client in version 0.4.8; the channel walkthrough applies to both clients. See page 16 for Windows test 4 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
+Chapters 1-13 describe the macOS client in version 0.4.9; the channel walkthrough applies to both clients. See page 16 for Windows test 5 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
 
 ### Find what you need
 
@@ -327,7 +327,7 @@ These are two separate functions. Both use the same selected modem transmit mode
 
 Enable **Beacon** in Radio Chat and select **Interval**, or configure it in Station Settings. The selectable range is **1-60 minutes**. A valid 4-, 6- or 8-character Maidenhead grid is required.
 
-Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.8`
+Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.9`
 
 It broadcasts to QST without changing your selected conversation or draft. **Beacon Now** requests a beacon while enabled and connected; a busy modem defers the request. The first automatic beacon follows one full interval after connection or configuration.
 
@@ -351,6 +351,8 @@ Automatic packets wait for ready audio, idle modem status and an empty TX queue.
 <!-- page -->
 
 # 10. Read Modem Activity
+
+**Decoding indicator:** Beside RX/TX (macOS) or frequency (Windows), green means a frame is being decoded; gray means inactive. A successful message is not guaranteed. Requires the current bundled engine.
 
 Open **Modem Activity** from the sidebar for the full dashboard. To watch activity while chatting, use **Dock with Chat**, or **Undock** it into a separate window. The same modem session serves both views.
 
@@ -466,7 +468,7 @@ Use **Modem events** in Radio Chat when diagnosing startup, device routing or co
 
 ### Basis of this manual
 
-Application behavior was checked against QSO73 0.4.8 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
+Application behavior was checked against QSO73 0.4.9 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
 
 Engine source: https://github.com/RFnexus/modem73/tree/3a37c290a5330bd95f4f283feafc5ba5605bdc52
 
@@ -509,7 +511,7 @@ All rooms share one radio frequency and transmit queue. Private chat is addresse
 
 # 15. Windows portable testing build
 
-The Windows companion is **0.4.8 test 4**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 4 adds automatic chat scrolling, PING and a compact modem-style dashboard; these changes still need Windows verification.
+The Windows companion is **0.4.9 test 5**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 5 adds the Decoding indicator alongside automatic chat scrolling, PING and a compact modem-style dashboard; these changes still need Windows verification.
 
 ### Extract and configure
 
@@ -543,7 +545,7 @@ PING checks whether an updated QSO73 station can decode your request and send a 
 
 ### Send a PING
 
-1. Use **QSO73 0.4.8 on macOS** or **Windows 0.4.8 test 4** at both ends, with their current bundled engines. Older clients do not implement this PING protocol. Independently installed engines need the decoded-frame application_id metadata used to associate each request with its own SNR.
+1. Use **QSO73 0.4.8 or later on macOS** or **Windows 0.4.8 test 4 or later** at both ends, with their current bundled engines. Older clients do not implement this PING protocol. Independently installed engines need the decoded-frame application_id metadata used to associate each request with its own SNR.
 2. Configure your callsign, grid, radio audio and PTT; start the modem and confirm audio is ready. The receiving station also needs a valid saved Maidenhead grid to reply.
 3. In Radio Chat, choose the other callsign in **To** and click **PING**. QST requests replies from listening QSO73 stations. If a direct conversation is selected, PING targets that station; from a channel, it uses QST. PING is shown in Radio Chat rather than as a channel message.
 4. Look for a **PING reply** in Radio Chat. It shows the responding callsign/grid and request SNR in dB. A local request entry confirms submission, not radio reception or delivery.

@@ -48,3 +48,7 @@ The control API is unauthenticated. Bundled local sockets bind to localhost; ext
 ## QSO73 0.4.8 PING metadata
 
 Both bundled engines include the QSO73 PING request UUID as `application_id` in decoded-frame metadata. The UUID is extracted from the completed AX.25 UI payload, including reassembled packets, alongside the source callsign/SSID. Automatic PING replies match this metadata to the received request before using its SNR. The Windows headless engine also exports audio level, DCD, last CSMA timing, completed TX count and recent TX frame data for the console dashboard. PHY and fragmentation code remain unchanged.
+
+## QSO73 0.4.9 decoder telemetry
+
+Both bundled engines expose `decoding` in status and push a `decoder_state` heartbeat every 200 ms. This reads existing decoder state through an atomic snapshot without changing PHY processing. Older external engines leave the indicator gray.
