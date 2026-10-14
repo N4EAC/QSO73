@@ -14,7 +14,7 @@ with zipfile.ZipFile(root/'vendor/hamlib/hamlib-w64-4.7.2.zip') as official:
 for filename in ('hamlib-4.7.2.tar.gz','libusb-1.0.24.tar.bz2'):
     assert (package/'hamlib/source'/filename).read_bytes()==(root/'vendor/hamlib'/filename).read_bytes()
 objdump=sys.argv[1] if len(sys.argv)>1 else 'x86_64-w64-mingw32-objdump'
-system={'advapi32.dll','comdlg32.dll','gdi32.dll','iphlpapi.dll','kernel32.dll','msvcrt.dll','ole32.dll','oleaut32.dll','rpcrt4.dll','setupapi.dll','shell32.dll','user32.dll','version.dll','winmm.dll','ws2_32.dll','bcrypt.dll','crypt32.dll'}
+system={'advapi32.dll','comdlg32.dll','gdi32.dll','iphlpapi.dll','kernel32.dll','msvcrt.dll','ole32.dll','oleaut32.dll','rpcrt4.dll','setupapi.dll','shell32.dll','user32.dll','version.dll','winmm.dll','ws2_32.dll','bcrypt.dll','crypt32.dll','winhttp.dll'}
 count=0
 for file in package.rglob('*'):
     if file.suffix.lower() not in ('.exe','.dll'):continue

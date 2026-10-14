@@ -2,6 +2,7 @@
 #include "cJSON.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -222,6 +223,7 @@ inline std::string unaddr(const Bytes &b, size_t pos) {
 }
 struct Packet {
   std::string source, destination, text;
+  bool automatic = false;
   Bytes encode() const {
     if (text.empty() || text.size() > 200 || !utf8(text))
       throw std::runtime_error("Packet allows 1-200 UTF-8 bytes.");
@@ -303,6 +305,10 @@ struct Framer {
 struct Entry {
   std::string room, source, text;
   bool outgoing = false;
+  bool automatic = false;
+  double utc = std::chrono::duration<double>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count();
 };
 struct Rooms {
   std::set<std::string> joined, discovered, directs, seen;
@@ -318,8 +324,11 @@ struct Rooms {
         p.destination != "CQ" && p.destination != "ALL")
       return false;
     Entry entry{"radio", p.source, p.text, outgoing};
+    entry.automatic = p.automatic || (p.text.rfind("BEACON ", 0) == 0 &&
+                                      p.text.find(" QSO73 v") != p.text.npos);
     if (p.text.rfind("~Q73:", 0) == 0) {
       auto e = Envelope::decode(p.text);
+      entry.automatic = entry.automatic || e.k != "msg";
       if (!station(p.source))
         throw std::runtime_error("Invalid sender.");
       bool ch = e.r[0] == '#';

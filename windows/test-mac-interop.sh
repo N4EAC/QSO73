@@ -34,3 +34,14 @@ windows/build/psk-reporter-tests /tmp/qso73-psk-windows.bin
 swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine Sources/Protocol.swift Sources/PSKReporter.swift Tests/PSKReporterTests.swift -o build/psk-reporter-tests
 build/psk-reporter-tests /tmp/qso73-psk-mac.bin
 python3 Tests/check_psk_ipfix.py /tmp/qso73-psk-mac.bin /tmp/qso73-psk-windows.bin
+
+swiftc -swift-version 5 -module-cache-path build/module-cache Sources/Protocol.swift Sources/HeardQuery.swift Tests/HeardQueryTests.swift -o build/heard-query-tests
+build/heard-query-tests /tmp/qso73-heard-mac.txt
+clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/tests/heard_query_test.cpp windows/build/cJSON-native.o -o windows/build/heard-query-tests
+windows/build/heard-query-tests /tmp/qso73-heard-windows.txt /tmp/qso73-heard-mac.txt
+build/heard-query-tests /tmp/qso73-heard-mac.txt /tmp/qso73-heard-windows.txt
+clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/tests/link_safety_test.cpp windows/build/cJSON-native.o -o windows/build/link-safety-tests
+windows/build/link-safety-tests /tmp/qso73-link-dns-windows.bin
+swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework AppKit -framework Combine Sources/Protocol.swift Sources/LinkSafety.swift Tests/LinkSafetyTests.swift -o build/link-safety-tests
+build/link-safety-tests /tmp/qso73-link-dns-mac.bin
+cmp /tmp/qso73-link-dns-mac.bin /tmp/qso73-link-dns-windows.bin

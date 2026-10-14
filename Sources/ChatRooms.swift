@@ -9,6 +9,7 @@ struct ChatEntry: Identifiable, Codable {
     var conversation = "radio"
     var source: String? = nil
     var destination: String? = nil
+    var automatic = false
 }
 
 // QSO73's versioned application protocol remains inside ordinary AX.25 UI packets.
@@ -133,7 +134,7 @@ struct RoomEnvelope: Codable, Equatable {
             }
             guard joined.contains(room) || outgoing else { return nil }
         } else { directs.insert(room) }
-        var entry = original; entry.conversation = room
+        var entry = original; entry.conversation = room; entry.automatic = entry.automatic || event.k != "msg"
         switch event.k {
         case "join": entry.text = "\(source) joined \(room)."
         case "leave": entry.text = "\(source) left \(room)."

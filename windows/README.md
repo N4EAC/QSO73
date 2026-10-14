@@ -1,10 +1,10 @@
 # QSO73 Windows portable test client
 
-**Version 0.4.10 Windows test 6 — Windows 10 (1903 or later) / Windows 11, x64.**
+**Version 0.4.11 Windows test 7 — Windows 10 (1903 or later) / Windows 11, x64.**
 
-This is an early Windows companion for testing with QSO73 0.4.10 on macOS. It implements the same QSO73 v1 channel/direct protocol and bundles the official Windows modem73 engine. Extract the **entire folder** to a writable directory and run **QSO73.exe**. No installer, Python, MSYS2 or WSL is required by the tester. Keep both the `engine` and `hamlib` folders beside the client. Hamlib 4.7.2 and all its runtime DLLs are included; no separate Hamlib installation or PATH changes are needed. Settings and logs stay inside the portable folder. Running inside the ZIP is not supported.
+This is an early Windows companion for testing with QSO73 0.4.11 on macOS. It implements the same QSO73 v1 channel/direct protocol and bundles the official Windows modem73 engine. Extract the **entire folder** to a writable directory and run **QSO73.exe**. No installer, Python, MSYS2 or WSL is required by the tester. Keep both the `engine` and `hamlib` folders beside the client. Hamlib 4.7.2 and all its runtime DLLs are included; no separate Hamlib installation or PATH changes are needed. Settings and logs stay inside the portable folder. Running inside the ZIP is not supported.
 
-The Windows executable has been cross-compiled on macOS. Packet compatibility and the modem DSP have local automated checks. A tester has reported successful radio connection and over-the-air message transmission with Windows test 2. The PING controls, improved activity dashboard and automatic chat scrolling in test 6 still require verification on Windows hardware. The upstream Windows modem port is itself experimental. This package is unsigned.
+The Windows executable has been cross-compiled on macOS. Packet compatibility and the modem DSP have local automated checks. A tester has reported successful radio connection and over-the-air message transmission with Windows test 2. The PING controls, improved activity dashboard and automatic chat scrolling in test 7 still require verification on Windows hardware. The upstream Windows modem port is itself experimental. This package is unsigned.
 
 ## Prepare the Windows station
 
@@ -61,7 +61,7 @@ Only the **builder** needs MSYS2. The recipient of a built ZIP does not.
 1. Install official MSYS2, then open **MSYS2 MinGW64**.
 2. Install the build tools: `pacman -S --needed make zip unzip mingw-w64-x86_64-gcc`.
 3. From Windows PowerShell, run `./Build-Windows.ps1` in this source folder. If MSYS2 is elsewhere, use `./Build-Windows.ps1 -MsysRoot 'D:\msys64'`.
-4. The script builds the client and bundled engine and creates **dist/QSO73-0.4.10-windows-x64-test6.zip**. Share that ZIP, not just QSO73.exe.
+4. The script builds the client and bundled engine and creates **dist/QSO73-0.4.11-windows-x64-test7.zip**. Share that ZIP, not just QSO73.exe.
 
 Alternatively, in MinGW64, run `CXX=g++ CC=gcc WINDRES=windres ./build.sh`. On macOS/Linux with mingw-w64 available, run `./build.sh`. The source dependencies are vendored and pinned; no engine or Hamlib downloads occur during a build. `build.sh` can be rerun after editing the client. The root Mac build is unchanged.
 
@@ -92,3 +92,11 @@ The small Decoding rectangle beside the frequency turns green during modem frame
 Enable PSK Reporter beside Grid to upload decoded station receptions over the Internet. The setting is off by default and saved. It needs your callsign/grid, working audio and CAT frequency/mode no older than 30 seconds. Status appears below Save settings. Disable it at any time to cancel pending reports.
 
 Reports contain received callsign, frame SNR, RF center frequency and time, plus your receiving callsign/grid and QSO73 version. Chat text is not uploaded. Reports use PKT; choose All modes or PKT on the PSK Reporter map. USB/LSB frequency includes the modem’s 1500 Hz center offset, while FM uses the dial. AX.25 SSIDs are removed. Batches upload about every five minutes; UDP submission does not confirm map delivery.
+
+## Heard queries, UTC colors, links and countdown
+
+Click Heard beside PING: leave its prompt blank for up to three recent callsigns, or enter a specific callsign. To=QST asks all listening stations; a callsign asks only that station. Replies return to the requester and appear in Radio Chat. Both ends need QSO73 0.4.11+. Enable Auto Heard replies at answering stations (off by default, saved). History covers up to one hour of the current modem session; it shows age and available SNR, supports exact SSIDs, excludes stale/unverified calls, and is cleared on disconnect. Allow one minute between queries. Broadcast responses use randomized delay, carrier sensing and queue/rate limits.
+
+The transcript uses UTC headers with blue own messages, orange generated messages and green received operator messages, all opaque on white. Checked web links retain those colors and open the default browser only after HTTPS URL validation and free Cloudflare/Quad9 malware-domain DNS checks. No account/API key is required. Failed or blocked checks do not open a browser. This checks known malicious domains, not full URL paths, page contents or redirects. No system DNS changes are made.
+
+The beacon row displays MM:SS until its next submission, waiting idle, paused or off. Changing its valid interval restarts the countdown.

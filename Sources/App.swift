@@ -83,7 +83,7 @@ import UniformTypeIdentifiers
     func exportChat(_ entries: [ChatEntry]) {
         let panel = NSSavePanel(); panel.nameFieldStringValue = "QSO73-chat.txt"; panel.allowedContentTypes = [.plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try entries.map { "[\($0.time.ISO8601Format())] \($0.direction): \($0.text)" }.joined(separator: "\n\n").write(to: url, atomically: true, encoding: .utf8) }
+        do { try entries.map { "[\($0.time.ISO8601Format())] \(ChatPresentation.heading($0)): \($0.text)" }.joined(separator: "\n\n").write(to: url, atomically: true, encoding: .utf8) }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -169,7 +169,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.10").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.11").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
@@ -203,6 +203,9 @@ struct MainView: View {
     }
 }
 struct ChatView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var showingHeardQuery = false
+    @StateObject private var linkSafety = ChatLinkSafety()
     @EnvironmentObject var rooms: ChatRooms
     @EnvironmentObject var engineUpdates: EngineUpdates
     @EnvironmentObject var activityPresentation: ActivityPresentation
@@ -272,13 +275,11 @@ struct ChatView: View {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(visibleEntries) { entry in
                             VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text(entry.direction).font(.caption.bold()).foregroundStyle(entry.direction.hasPrefix("You") ? .teal : .secondary)
-                                    Spacer()
-                                    Text(entry.time, style: .time).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Text(entry.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                            }.padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 10)).id(entry.id)
+                                Text(ChatPresentation.heading(entry)).font(.caption.bold())
+                                ChatLinkedText(text: entry.text, color: ChatPresentation.color(ChatPresentation.tone(entry), dark: colorScheme == .dark), safety: linkSafety).frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .foregroundStyle(ChatPresentation.color(ChatPresentation.tone(entry), dark: colorScheme == .dark))
+                            .padding(14).background(colorScheme == .dark ? Color(red: 0.13, green: 0.14, blue: 0.16) : Color(red: 0.965, green: 0.97, blue: 0.98), in: RoundedRectangle(cornerRadius: 10)).id(entry.id)
                         }
                     }.padding()
                 }.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
@@ -294,7 +295,10 @@ struct ChatView: View {
                 Button("PING") { modem.sendPing(to: rooms.selected.hasPrefix("#") ? "QST" : rooms.selected == "radio" ? workspace.chatTarget : rooms.selected) }.disabled(!modem.attached || !modem.audioConnected)
                     .help("Requests an automatic SNR/callsign/grid reply from the selected station, or from listening stations when To is QST.")
                 Toggle("Auto PING replies", isOn: $modem.autoPingReply).toggleStyle(.checkbox)
-                Text("Replies use measured SNR and your saved grid").font(.caption).foregroundStyle(.secondary)
+                Button("Heard…") { modem.error = nil; showingHeardQuery = true }.disabled(!modem.attached || !modem.audioConnected)
+                    .sheet(isPresented: $showingHeardQuery) { HeardQueryForm(modem: modem, target: rooms.selected.hasPrefix("#") ? "QST" : rooms.selected == "radio" ? workspace.chatTarget : rooms.selected) }
+                Toggle("Auto Heard replies", isOn: $modem.autoHeardReply).toggleStyle(.checkbox)
+                    .help("Answers recent-callsign and specific-callsign queries from other stations. Off by default.")
             }
             BeaconControls(workspace: workspace, modem: modem, beacon: modem.beacon)
             HStack(spacing: 10) {
@@ -329,6 +333,17 @@ struct ChatView: View {
                 ScrollView { Text(modem.events.joined(separator: "\n")).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 120)
             }
         }
+        .overlay(alignment: .top) {
+            if linkSafety.checking {
+                VStack(spacing: 8) {
+                    ProgressView("Checking link: \(linkSafety.host)")
+                    Text("Cloudflare and Quad9 malware-domain checks").font(.caption)
+                    Button("Cancel") { linkSafety.cancel() }
+                }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)).shadow(radius: 5).padding()
+            }
+        }
+        .alert("Link not opened", isPresented: Binding(get: { linkSafety.warning != nil }, set: { if !$0 { linkSafety.warning = nil } })) { Button("OK") { linkSafety.warning = nil } } message: { Text(linkSafety.warning ?? "") }
+        .onDisappear { linkSafety.cancel() }
     }
 }
 struct SettingsView: View {

@@ -24,6 +24,26 @@ struct RecentModemFrame: Identifiable {
     private var reportedDial: Double?
     private var reportedCATTime = Date.distantPast
     private var reportedModeTime = Date.distantPast
+    private var heard = HeardSession()
+    private var heardBook = HeardBook()
+    private var lastHeardQuery = Date.distantPast
+    @Published var autoHeardReply = false { didSet { pingDefaults?.set(autoHeardReply, forKey: "qso73.autoHeardReply.v1"); if !autoHeardReply { heard.clearPending() } } }
+    @discardableResult func sendHeardQuery(to target: String, query: String) -> Bool {
+        guard attached, audioConnected else { error = "Connect modem audio before querying."; return false }
+        guard Date().timeIntervalSince(lastHeardQuery) >= 60 else { error = "Wait one minute between Heard queries."; return false }
+        let target = PacketAddress.canonical(target), query = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard target == "QST" || StationSettings.validCallsign(target) else { error = "Select QST or a station callsign."; return false }
+        do {
+            error = nil; send(try HeardMessage(k: "request", id: UUID().uuidString, q: query.isEmpty ? nil : query).encoded(), to: target, automatic: true)
+            if error == nil { lastHeardQuery = Date(); return true }
+        } catch { self.error = error.localizedDescription }
+        return false
+    }
+    private func sendHeardReply() {
+        guard autoHeardReply, automaticTransmissionReady else { return }
+        do { if let reply = try heard.reply(now: Date(), history: heardBook) { send(reply.1, to: reply.0, automatic: true); lastAutomaticSubmission = Date() } }
+        catch { log("Heard reply skipped: " + error.localizedDescription); heard.clearPending() }
+    }
     private var ping = PingSession()
     private var pingDefaults: UserDefaults?
     @Published var autoPingReply = false { didSet { pingDefaults?.set(autoPingReply, forKey: "qso73.autoPingReply.v1"); if !autoPingReply { ping.clearPending() } } }
@@ -31,7 +51,7 @@ struct RecentModemFrame: Identifiable {
         guard attached, audioConnected else { error = "Connect modem audio before sending PING."; return }
         let target = PacketAddress.canonical(target)
         guard target == "QST" || StationSettings.validCallsign(target) else { error = "Select QST or a station callsign for PING."; return }
-        do { send(try PingMessage(k: "request", id: UUID().uuidString).encoded(), to: target) }
+        do { send(try PingMessage(k: "request", id: UUID().uuidString).encoded(), to: target, automatic: true) }
         catch { self.error = error.localizedDescription }
     }
     private func sendPingReply() {
@@ -40,7 +60,7 @@ struct RecentModemFrame: Identifiable {
         do {
             if let reply = try ping.reply(own: PacketAddress.canonical(station.callsign), grid: station.locator, now: Date(), snr: { request in
                 frames.first { $0.callsign == request.source && $0.metadata["application_id"] == request.id && abs($0.time.timeIntervalSince(request.received)) <= 5 && $0.metadata["snr"].flatMap(Double.init)?.isFinite == true && $0.snr.isFinite }?.snr
-            }) { send(reply.1, to: reply.0); lastAutomaticSubmission = Date() }
+            }) { send(reply.1, to: reply.0, automatic: true); lastAutomaticSubmission = Date() }
         } catch { log("PING reply skipped: " + error.localizedDescription); ping.clearPending() }
     }
     let beacon = BeaconController()
@@ -118,6 +138,7 @@ struct RecentModemFrame: Identifiable {
     private var pending: Request?
 
     init(chatDefaults: UserDefaults? = .standard) {
+        autoHeardReply = chatDefaults?.bool(forKey: "qso73.autoHeardReply.v1") ?? false
         reporter = PSKReporter(defaults: chatDefaults)
         rooms = ChatRooms(defaults: chatDefaults)
         pingDefaults = chatDefaults; autoPingReply = chatDefaults?.bool(forKey: "qso73.autoPingReply.v1") ?? false
@@ -128,7 +149,7 @@ struct RecentModemFrame: Identifiable {
         beacon.transmit = { [weak self] message in
             guard let self else { throw RadioError.invalid("Modem unavailable.") }
             self.error = nil
-            self.send(message, to: "QST")
+            self.send(message, to: "QST", automatic: true)
             if let error = self.error { throw RadioError.invalid(error) }
             self.lastAutomaticSubmission = Date()
         }
@@ -239,6 +260,7 @@ struct RecentModemFrame: Identifiable {
                     if self.ready.count == 2 {
                         self.timeout?.cancel(); self.attached = true; self.connecting = false; self.status = "modem73 ready"
                         self.log("KISS and JSON control channels connected.")
+                        self.heardBook.begin(own: self.station.callsign, now: Date())
                         self.reporter.begin(call: self.station.callsign, grid: self.station.locator)
                         self.beacon.start()
                         self.channelAnnouncements.start()
@@ -251,6 +273,7 @@ struct RecentModemFrame: Identifiable {
                                 guard !Task.isCancelled, let self, self.generation == current else { return }
                                 if Date().timeIntervalSince(self.decoderStateTime) > 3 { self.decoding = false }
                                 self.sendPingReply()
+                                self.sendHeardReply()
                                 if self.pending == nil && self.requests.isEmpty {
                                     self.request(["cmd": "get_status"], purpose: "status")
                                     if self.config.catEnabled {
@@ -288,6 +311,7 @@ struct RecentModemFrame: Identifiable {
                             for frame in try self.kissFramer.feed(bytes) {
                                 do {
                                     let packet = try RadioPacket.decode(frame)
+                                    self.heardBook.observe(call: packet.source, snr: nil, time: Date(), now: Date(), packetFallback: true)
                                     let destination = packet.destination.uppercased()
                                     guard destination == self.station.callsign || ["QST", "CQ", "ALL"].contains(destination) else { continue }
                                     self.append(ChatEntry(direction: "\(packet.source) → \(packet.destination)", text: packet.text, source: packet.source, destination: packet.destination))
@@ -305,9 +329,13 @@ struct RecentModemFrame: Identifiable {
     private func append(_ original: ChatEntry) {
         var entry = original
         do {
+            if entry.text.hasPrefix(HeardMessage.prefix) {
+                guard let readable = try heard.receive(entry.text, source: PacketAddress.canonical(entry.source ?? ""), destination: PacketAddress.canonical(entry.destination ?? ""), own: PacketAddress.canonical(station.callsign), outgoing: entry.direction.hasPrefix("You"), enabled: autoHeardReply, now: entry.time, delay: Double.random(in: 4...24)) else { return }
+                entry.text = readable; entry.automatic = true
+            }
             if entry.text.hasPrefix(PingMessage.prefix) {
                 guard let readable = try ping.receive(entry.text, source: PacketAddress.canonical(entry.source ?? ""), destination: PacketAddress.canonical(entry.destination ?? ""), own: PacketAddress.canonical(station.callsign), outgoing: entry.direction.hasPrefix("You"), enabled: autoPingReply, now: entry.time) else { return }
-                entry.text = readable
+                entry.text = readable; entry.automatic = true
             }
             guard let routed = try rooms.route(entry, local: station.callsign, outgoing: entry.direction.hasPrefix("You")) else { return }
             let other = entry.direction.hasPrefix("You") ? entry.destination : entry.source
@@ -498,6 +526,10 @@ struct RecentModemFrame: Identifiable {
             mode: object["mode"] as? String ?? "—", callsign: object["callsign"] as? String ?? "",
             snr: signal, ber: ber, metadata: Self.scalarDetails(object)), at: 0)
         if recentFrames.count > 8 { recentFrames.removeLast() }
+        if object["callsign_source"] as? String == "ax25", let received = (object["time"] as? NSNumber)?.doubleValue, received.isFinite {
+            heardBook.observe(call: object["callsign"] as? String ?? "", snr: (object["snr"] as? NSNumber)?.doubleValue, time: Date(timeIntervalSince1970: received), now: Date())
+        }
+
         if audioConnected, rigConnected, config.catEnabled,
            config.embedded || configDetails["center_freq"].flatMap(Double.init) == 1500,
            let measured = (object["snr"] as? NSNumber)?.doubleValue,
@@ -521,7 +553,7 @@ struct RecentModemFrame: Identifiable {
             now.timeIntervalSince(frame.time) >= -5 && now.timeIntervalSince(frame.time) <= 600
         }?.snr
     }
-    func send(_ message: String, to destination: String) {
+    func send(_ message: String, to destination: String, automatic: Bool = false) {
         guard attached, let kiss, configLoaded else { error = "Wait for the modem configuration before sending."; return }
         guard audioConnected else { error = "The modem's audio device is unavailable."; return }
         do {
@@ -534,7 +566,7 @@ struct RecentModemFrame: Identifiable {
                     guard let self, self.generation == current else { return }
                     if let failure { self.fail(failure.localizedDescription) }
                     else {
-                        self.append(ChatEntry(direction: "You → \(target) · submitted", text: message, source: self.station.callsign, destination: target))
+                        self.append(ChatEntry(direction: "You → \(target) · submitted", text: message, source: self.station.callsign, destination: target, automatic: automatic))
                         self.log("Submitted AX.25 UI packet (\(packet.count) bytes); packet chat has no delivery acknowledgment.")
                     }
                 }
@@ -559,6 +591,7 @@ struct RecentModemFrame: Identifiable {
     }
     func detach() {
         channelAnnouncements.stop()
+        heard.reset(); heardBook.clear(); lastHeardQuery = .distantPast
         ping.clearPending()
         beacon.stop()
         generation = UUID(); timeout?.cancel(); polling?.cancel(); requestTimeout?.cancel()

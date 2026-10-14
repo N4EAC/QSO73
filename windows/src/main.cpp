@@ -6,11 +6,15 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <commctrl.h>
+#include <richedit.h>
 #include <commdlg.h>
 #include <objbase.h>
 #include <shellapi.h>
 // clang-format on
+#include "chat_presentation.hpp"
 #include "dashboard.hpp"
+#include "heard_query.hpp"
+#include "link_transport.hpp"
 #include "ping.hpp"
 #include "protocol.hpp"
 #include "psk_reporter.hpp"
@@ -27,7 +31,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.10 Windows test 6";
+constexpr const wchar_t *VERSION = L"0.4.11 Windows test 7";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -55,7 +59,10 @@ enum ControlID {
   BEACONNOW,
   PING,
   AUTOPING,
-  PSKREPORTER
+  PSKREPORTER,
+  HEARDQUERY,
+  AUTOHEARD,
+  CHATLOG
 };
 enum SettingID {
   CALL = 201,
@@ -75,7 +82,11 @@ enum SettingID {
   CATBAUD
 };
 HWND win, history, composer, statusLabel, topicLabel, frequencyLabel,
-    decodingLabel, reportingLabel;
+    decodingLabel, reportingLabel, beaconCountdownLabel, linkSafetyLabel;
+LinkCheckWorker linkChecks;
+uint64_t linkRequestId = 0;
+std::string linkCurrentURL;
+std::string renderedHistory;
 bool decodingActive = false;
 double decoderStateTime = 0;
 HANDLE activityProcess = nullptr;
@@ -94,10 +105,13 @@ struct Settings {
                                          custom;
   int drive = 25, rigPort = 4532, rigModel = 0, catBaud = 38400;
   std::string catCOM;
-  bool autoPing = false, pskReporter = false;
+  bool autoPing = false, pskReporter = false, autoHeard = false;
 };
 Settings settings;
 PingSession ping;
+HeardBook heardBook;
+HeardSession heard;
+double lastHeardQuery = -1e9;
 PSKReportQueue pskReports;
 std::atomic<bool> pskFrequencyMode{false};
 PSKUploadWorker pskUploader;
@@ -255,6 +269,7 @@ void saveSettings() {
            {"catCOM", settings.catCOM}})
     cJSON_AddStringToObject(j.p, p.first, p.second.c_str());
   cJSON_AddBoolToObject(j.p, "autoPing", settings.autoPing);
+  cJSON_AddBoolToObject(j.p, "autoHeard", settings.autoHeard);
   cJSON_AddBoolToObject(j.p, "pskReporter", settings.pskReporter);
   cJSON_AddNumberToObject(j.p, "drive", settings.drive);
   cJSON_AddNumberToObject(j.p, "rigPort", settings.rigPort);
@@ -279,6 +294,7 @@ void loadSettings() {
   try {
     Json j(s);
     settings.autoPing = j.yes("autoPing");
+    settings.autoHeard = j.yes("autoHeard");
     settings.pskReporter = j.yes("pskReporter");
     settings.call = j.str("call");
     settings.grid = j.str("grid");
@@ -310,6 +326,7 @@ void loadSettings() {
 void readSettings() {
   Settings s;
   s.autoPing = settings.autoPing;
+  s.autoHeard = settings.autoHeard;
   s.pskReporter = settings.pskReporter;
   s.call = call(value(CALL));
   s.grid = call(value(GRID));
@@ -820,6 +837,9 @@ void start() {
   engine = pi.hProcess;
   enginePID = pi.dwProcessId;
   running = true;
+  heard.reset();
+  heardBook.clear();
+  lastHeardQuery = -1e9;
   resetReporting();
   pskSince = 0;
   reportedDial = 0;
@@ -874,6 +894,9 @@ void stop() {
     }
   }
   closeChild(rigDaemon, rigPID, CTRL_C_EVENT);
+  heard.reset();
+  heardBook.clear();
+  lastHeardQuery = -1e9;
   resetReporting();
   pskSince = 0;
   reportedDial = 0;
@@ -909,24 +932,77 @@ void sendEnvelope(const std::string &k, const std::string &room,
   enqueue({settings.call, room[0] == '#' ? "QST" : room, e.encode()});
 }
 void showHistory() {
-  std::string s;
-  for (auto &e : rooms.entries)
-    if (e.room == rooms.selected)
-      s +=
-          (e.outgoing ? "You -> " : "") + e.source + ": " + e.text + "\r\n\r\n";
-  if (text(history) != s) {
-    put(history, s);
-    int end = GetWindowTextLengthW(history);
-    SendMessageW(history, EM_SETSEL, end, end);
-    SendMessageW(history, EM_SCROLLCARET, 0, 0);
-    SendMessageW(history, WM_VSCROLL, SB_BOTTOM, 0);
-  }
   put(topicLabel, rooms.selected[0] == '#'
                       ? "Topic: " + rooms.topics[rooms.selected]
                   : rooms.selected == "radio"
                       ? "Radio Chat - QST broadcasts to all stations"
                       : "Direct: " + rooms.selected);
+  std::string text;
+  for (const auto &e : rooms.entries)
+    if (e.room == rooms.selected)
+      text += chatLine(e);
+  if (renderedHistory == text)
+    return;
+  renderedHistory = text;
+  SendMessageW(history, WM_SETREDRAW, FALSE, 0);
+  SendMessageW(history, EM_SETREADONLY, FALSE, 0);
+  SetWindowTextW(history, L"");
+  for (const auto &e : rooms.entries)
+    if (e.room == rooms.selected) {
+      SendMessageW(history, EM_SETSEL, -1, -1);
+      CHARFORMAT2W format{};
+      format.cbSize = sizeof(format);
+      format.dwMask = CFM_COLOR | CFM_LINK | CFM_UNDERLINE;
+      format.dwEffects = 0;
+      auto tone = chatTone(e);
+      auto rgb = chatRGB(tone);
+      format.crTextColor = RGB(rgb.red, rgb.green, rgb.blue);
+      SendMessageW(history, EM_SETCHARFORMAT, SCF_SELECTION,
+                   reinterpret_cast<LPARAM>(&format));
+      CHARRANGE before{};
+      SendMessageW(history, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&before));
+      auto line = wide(chatLine(e));
+      for (size_t p = 0; (p = line.find(L"\r\n", p)) != line.npos;)
+        line.replace(p, 2, L"\r");
+      SendMessageW(history, EM_REPLACESEL, FALSE,
+                   reinterpret_cast<LPARAM>(line.c_str()));
+      CHARRANGE after{};
+      SendMessageW(history, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&after));
+      CHARRANGE entire{before.cpMin, after.cpMin};
+      SendMessageW(history, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&entire));
+      SendMessageW(history, EM_SETCHARFORMAT, SCF_SELECTION,
+                   reinterpret_cast<LPARAM>(&format));
+      const std::wregex urls(LR"(https?://[^\s<>"{}]+)", std::regex::icase);
+      for (std::wsregex_iterator i(line.begin(), line.end(), urls), end;
+           i != end; ++i) {
+        auto value = i->str();
+        while (!value.empty() &&
+               (value.back() == L'.' || value.back() == L',' ||
+                value.back() == L';' || value.back() == L'!' ||
+                (value.back() == L')' &&
+                 std::count(value.begin(), value.end(), L')') >
+                     std::count(value.begin(), value.end(), L'('))))
+          value.pop_back();
+        if (value.empty())
+          continue;
+        CHARRANGE range{before.cpMin + LONG(i->position()),
+                        before.cpMin + LONG(i->position() + value.size())};
+        SendMessageW(history, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&range));
+        CHARFORMAT2W link = format;
+        link.dwMask = CFM_LINK | CFM_UNDERLINE | CFM_COLOR;
+        link.dwEffects = CFE_LINK | CFE_UNDERLINE;
+        SendMessageW(history, EM_SETCHARFORMAT, SCF_SELECTION,
+                     reinterpret_cast<LPARAM>(&link));
+      }
+    }
+  SendMessageW(history, EM_SETSEL, -1, -1);
+  SendMessageW(history, EM_SCROLLCARET, 0, 0);
+  SendMessageW(history, WM_VSCROLL, SB_BOTTOM, 0);
+  SendMessageW(history, EM_SETREADONLY, TRUE, 0);
+  SendMessageW(history, WM_SETREDRAW, TRUE, 0);
+  InvalidateRect(history, nullptr, FALSE);
 }
+
 void rebuildRooms() {
   roomNames = {"radio"};
   roomNames.insert(roomNames.end(), rooms.discovered.begin(),
@@ -1056,7 +1132,7 @@ LRESULT CALLBACK promptProc(HWND h, UINT m, WPARAM w, LPARAM l) {
   return DefWindowProcW(h, m, w, l);
 }
 bool prompt(const std::wstring &title, const std::wstring &instruction,
-            std::string &value) {
+            std::string &value, const wchar_t *buttonText = L"Transmit Topic") {
   PromptState s;
   WNDCLASSW wc{};
   wc.lpfnWndProc = promptProc;
@@ -1081,7 +1157,7 @@ bool prompt(const std::wstring &title, const std::wstring &instruction,
   s.input = make(L"EDIT", wide(value).c_str(), 1000, 12, 45, 485,
                  WS_TABSTOP | ES_AUTOHSCROLL);
   SendMessageW(s.input, EM_SETLIMITTEXT, 200, 0);
-  make(L"BUTTON", L"Transmit Topic", IDOK, 260, 86, 140,
+  make(L"BUTTON", buttonText, IDOK, 260, 86, 140,
        WS_TABSTOP | BS_DEFPUSHBUTTON);
   make(L"BUTTON", L"Cancel", IDCANCEL, 408, 86, 88, WS_TABSTOP);
   EnableWindow(win, FALSE);
@@ -1204,10 +1280,19 @@ void automation() {
       return;
     }
   }
+  if (settings.autoHeard) {
+    if (auto reply = heard.reply(settings.call, epoch(), heardBook)) {
+      reply->automatic = true;
+      enqueue(*reply);
+      lastAuto = now();
+      return;
+    }
+  }
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.10-win-test6"});
+                 " QSO73 v0.4.11-win-test7",
+             true});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
     lastAuto = now();
@@ -1232,7 +1317,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 6 - ") +
+  std::string s = std::string("QSO73 Windows test 7 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1355,8 +1440,7 @@ void exportChat() {
     if (!f)
       throw std::runtime_error("Cannot write transcript.");
     for (auto &e : rooms.entries)
-      f << "[" << e.room << "] " << (e.outgoing ? "You -> " : "") << e.source
-        << ": " << e.text << "\n";
+      f << "[" << e.room << "] " << chatLine(e);
   }
 }
 void pollUI() {
@@ -1370,12 +1454,24 @@ void pollUI() {
     try {
       if (e.kind == "packet" || e.kind == "sent") {
         bool sent = e.kind == "sent";
+        if (!sent)
+          heardBook.observe(e.packet.source, {}, epoch(), epoch(), true);
+        if (e.packet.text.rfind(HeardMessage::prefix, 0) == 0) {
+          auto readable =
+              heard.receive(e.packet, settings.call, sent, settings.autoHeard,
+                            epoch(), 4 + std::random_device{}() % 21);
+          if (!readable)
+            continue;
+          e.packet.text = *readable;
+          e.packet.automatic = true;
+        }
         if (e.packet.text.rfind(PingMessage::prefix, 0) == 0) {
           auto readable = ping.receive(e.packet, settings.call, sent,
                                        settings.autoPing, now());
           if (!readable)
             continue;
           e.packet.text = *readable;
+          e.packet.automatic = true;
         }
         if (rooms.route(e.packet, settings.call, sent, now()))
           changed = true;
@@ -1408,6 +1504,24 @@ void pollUI() {
       else if (e.kind == "frames") {
         rawFrames = e.data;
         framesTime = now();
+        Json frames(e.data);
+        cJSON *frame;
+        cJSON_ArrayForEach(
+            frame, cJSON_GetObjectItemCaseSensitive(frames.p, "frames")) {
+          auto source = cJSON_GetObjectItemCaseSensitive(frame, "callsign"),
+               origin =
+                   cJSON_GetObjectItemCaseSensitive(frame, "callsign_source"),
+               time = cJSON_GetObjectItemCaseSensitive(frame, "time"),
+               signal = cJSON_GetObjectItemCaseSensitive(frame, "snr");
+          if (cJSON_IsString(source) && cJSON_IsString(origin) &&
+              std::string(origin->valuestring) == "ax25" &&
+              cJSON_IsNumber(time))
+            heardBook.observe(source->valuestring,
+                              cJSON_IsNumber(signal)
+                                  ? std::optional<double>(signal->valuedouble)
+                                  : std::nullopt,
+                              time->valuedouble, epoch());
+        }
       } else if (e.kind == "frequency") {
         Json snapshot(e.data.empty() ? "{}" : e.data);
         catFrequency = snapshot.str("text");
@@ -1420,6 +1534,17 @@ void pollUI() {
           decodingActive = event.yes("decoding");
           decoderStateTime = now();
           continue;
+        }
+        if (event.str("event") == "rx_frame" &&
+            event.str("callsign_source") == "ax25") {
+          auto time = cJSON_GetObjectItemCaseSensitive(event.p, "time"),
+               signal = cJSON_GetObjectItemCaseSensitive(event.p, "snr");
+          if (cJSON_IsNumber(time))
+            heardBook.observe(event.str("callsign"),
+                              cJSON_IsNumber(signal)
+                                  ? std::optional<double>(signal->valuedouble)
+                                  : std::nullopt,
+                              time->valuedouble, epoch());
         }
         if (event.str("event") == "rx_frame" && settings.pskReporter &&
             connected && audioReady && rigReady &&
@@ -1444,6 +1569,23 @@ void pollUI() {
         Json j(e.data);
         notify(j.yes("ok") ? "CAT response: " + j.str("response")
                            : "CAT command failed: " + e.data);
+      } else if (e.kind == "link_result") {
+        Json result(e.data);
+        if (result.str("token") != std::to_string(linkRequestId))
+          continue;
+        put(linkSafetyLabel, "");
+        if (!result.str("error").empty())
+          MessageBoxW(
+              win, wide(result.str("error") + "\n\n" + linkCurrentURL).c_str(),
+              L"Link not opened", MB_OK | MB_ICONWARNING);
+        else {
+          auto target = wide(result.str("url"));
+          if (reinterpret_cast<INT_PTR>(
+                  ShellExecuteW(win, L"open", target.c_str(), nullptr, nullptr,
+                                SW_SHOWNORMAL)) <= 32)
+            MessageBoxW(win, L"Could not open your default browser.", L"QSO73",
+                        MB_OK | MB_ICONWARNING);
+        }
       } else if (e.kind == "psk_result") {
         if (e.data.rfind(std::to_string(pskGeneration) + ":", 0) != 0)
           continue;
@@ -1471,6 +1613,7 @@ void pollUI() {
         stop();
         notify("Disconnected: " + e.data);
       } else if (e.kind == "connected") {
+        heardBook.begin(settings.call, epoch());
         pskSince = epoch();
         resetReporting();
         changed = true;
@@ -1496,7 +1639,7 @@ void pollUI() {
       pskBatch = pskReports.reports;
       try {
         auto bytes = PSKReportQueue::encode(
-            settings.call, settings.grid, "QSO73 0.4.10 / modem73 2.4.2",
+            settings.call, settings.grid, "QSO73 0.4.11 / modem73 2.4.2",
             pskBatch, pskSequence, pskDomain, uint32_t(epoch()));
         pskSending = true;
         pskStatus = "PSK: submitting via Internet";
@@ -1513,6 +1656,12 @@ void pollUI() {
     }
   }
   put(reportingLabel, pskStatus);
+  put(beaconCountdownLabel,
+      beaconCountdown(beaconOn, beaconPending,
+                      connected && audioReady &&
+                          (settings.ptt != "rigctl" || rigReady) &&
+                          now() - statusTime <= 6,
+                      beaconDue, now()));
   publishActivity();
   if (running && rigDaemon &&
       WaitForSingleObject(rigDaemon, 0) == WAIT_OBJECT_0) {
@@ -1539,7 +1688,8 @@ void pollUI() {
     notify(e.what());
     rebuildRooms();
   }
-  for (int id : {SEND, CQ, SNR, CLOSEQSO, CUSTOM, SETFREQ, BEACONNOW, PING})
+  for (int id :
+       {SEND, CQ, SNR, CLOSEQSO, CUSTOM, SETFREQ, BEACONNOW, PING, HEARDQUERY})
     EnableWindow(controls[id],
                  connected && audioReady &&
                      (settings.ptt != "rigctl" || rigReady) &&
@@ -1585,6 +1735,8 @@ void layout(int w, int h) {
   MoveWindow(controls[NEWROOM], w - 390, 14, 200, 25, TRUE);
   MoveWindow(controls[JOIN], w - 185, 14, 170, 27, TRUE);
   MoveWindow(topicLabel, left, 49, right - 240, 22, TRUE);
+  MoveWindow(linkSafetyLabel, 852, 155, std::max(80, w - 867), 24, TRUE);
+  MoveWindow(beaconCountdownLabel, 838, 123, std::max(100, w - 853), 24, TRUE);
   MoveWindow(decodingLabel, w - 95, 86, 80, 22, TRUE);
   MoveWindow(frequencyLabel, 778, 86, std::max(100, w - 888), 24, TRUE);
   MoveWindow(controls[TOPIC], w - 235, 45, 70, 27, TRUE);
@@ -1593,7 +1745,7 @@ void layout(int w, int h) {
 }
 void makeUI() {
   font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-  label(L"QSO73 Windows test 6", 15, 14, 275);
+  label(L"QSO73 Windows test 7", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104, 75);
@@ -1655,14 +1807,24 @@ void makeUI() {
         BS_AUTOCHECKBOX | WS_TABSTOP);
   edit(ANNMIN, 750, 120, 42, "10");
   label(L"min", 798, 124, 32);
+  beaconCountdownLabel = child(L"STATIC", L"Beacon off", 0, 838, 123, 175, 24);
   button(PING, L"PING", 300, 151, 75);
   child(L"BUTTON", L"Auto PING replies", AUTOPING, 388, 151, 155, 25,
         BS_AUTOCHECKBOX | WS_TABSTOP);
   SendMessageW(controls[AUTOPING], BM_SETCHECK,
                settings.autoPing ? BST_CHECKED : BST_UNCHECKED, 0);
-  label(L"Reply with measured SNR, callsign and saved grid", 555, 155, 430);
-  history = child(L"EDIT", L"", 0, 300, 158, 680, 380,
+  button(HEARDQUERY, L"Heard...", 555, 151, 85);
+  child(L"BUTTON", L"Auto Heard replies", AUTOHEARD, 650, 151, 190, 25,
+        BS_AUTOCHECKBOX | WS_TABSTOP);
+  SendMessageW(controls[AUTOHEARD], BM_SETCHECK,
+               settings.autoHeard ? BST_CHECKED : BST_UNCHECKED, 0);
+  linkSafetyLabel = child(L"STATIC", L"", 0, 852, 155, 170, 24);
+  history = child(MSFTEDIT_CLASS, L"", CHATLOG, 300, 188, 680, 350,
                   ES_MULTILINE | ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL);
+  SendMessageW(history, EM_SETEVENTMASK, 0,
+               SendMessageW(history, EM_GETEVENTMASK, 0, 0) | ENM_LINK);
+  SendMessageW(history, EM_EXLIMITTEXT, 0, 4000000);
+  SendMessageW(history, EM_SETBKGNDCOLOR, 0, RGB(255, 255, 255));
   composer = child(L"EDIT", L"", 0, 300, 550, 560, 65,
                    ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP);
   SendMessageW(composer, EM_SETLIMITTEXT, 200, 0);
@@ -1724,9 +1886,43 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     pollUI();
     return 0;
   }
+  if (m == WM_NOTIFY && reinterpret_cast<NMHDR *>(l)->hwndFrom == history &&
+      reinterpret_cast<NMHDR *>(l)->code == EN_LINK) {
+    auto event = reinterpret_cast<ENLINK *>(l);
+    if (event->msg == WM_LBUTTONUP && event->chrg.cpMax > event->chrg.cpMin &&
+        event->chrg.cpMax - event->chrg.cpMin <= 2048) {
+      std::wstring value(size_t(event->chrg.cpMax - event->chrg.cpMin) + 1,
+                         L'\0');
+      TEXTRANGEW range{event->chrg, value.data()};
+      SendMessageW(history, EM_GETTEXTRANGE, 0,
+                   reinterpret_cast<LPARAM>(&range));
+      value.resize(wcslen(value.c_str()));
+      linkCurrentURL = narrow(value);
+      auto token = ++linkRequestId;
+      put(linkSafetyLabel, "Checking link...");
+      linkChecks.check(
+          linkCurrentURL, [token](std::string url, std::string error) {
+            Json result(cJSON_CreateObject());
+            cJSON_AddStringToObject(result.p, "token",
+                                    std::to_string(token).c_str());
+            cJSON_AddStringToObject(result.p, "url", url.c_str());
+            cJSON_AddStringToObject(result.p, "error", error.c_str());
+            post({"link_result", result.dump(), {}});
+          });
+      return 1;
+    }
+    return 0;
+  }
   if (m == WM_COMMAND) {
     int id = LOWORD(w);
     try {
+      if (id == BEACONMIN && HIWORD(w) == EN_CHANGE && beaconOn) {
+        try {
+          beaconDue = now() + minutes(BEACONMIN) * 60;
+        } catch (...) {
+        }
+        return 0;
+      }
       if (HIWORD(w) == CBN_SELCHANGE) {
         if (id == ROOMS) {
           int i = int(SendMessageW(controls[id], CB_GETCURSEL, 0, 0));
@@ -1809,6 +2005,38 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
           ping.pending.clear();
         saveSettings();
         break;
+      case AUTOHEARD:
+        settings.autoHeard =
+            SendMessageW(controls[AUTOHEARD], BM_GETCHECK, 0, 0) == BST_CHECKED;
+        if (!settings.autoHeard)
+          heard.pending.clear();
+        saveSettings();
+        break;
+      case HEARDQUERY: {
+        if (now() - lastHeardQuery < 60)
+          throw std::runtime_error("Wait one minute between Heard queries.");
+        auto target = rooms.selected == "radio"  ? call(value(TO))
+                      : rooms.selected[0] == '#' ? "QST"
+                                                 : rooms.selected;
+        if (target != "QST" && !station(target))
+          throw std::runtime_error("Select QST or a callsign.");
+        std::string search;
+        if (prompt(L"Heard query to " + wide(target),
+                   L"Blank: recent callsigns. Or enter a callsign (last hour, "
+                   L"this session).",
+                   search, L"Send query")) {
+          search = HeardMessage::cleanQuery(search);
+          auto query =
+              HeardMessage{"request",
+                           newID(),
+                           search.empty() ? std::nullopt
+                                          : std::optional<std::string>(search),
+                           {}};
+          enqueue({settings.call, target, query.encode(), true});
+          lastHeardQuery = now();
+        }
+        break;
+      }
       case PING: {
         auto target = rooms.selected == "radio"  ? call(value(TO))
                       : rooms.selected[0] == '#' ? "QST"
@@ -1887,6 +2115,8 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return 0;
   }
   if (m == WM_DESTROY) {
+    ++linkRequestId;
+    linkChecks.cancel();
     if (activityProcess) {
       TerminateProcess(activityProcess, 0);
       CloseHandle(activityProcess);
@@ -1898,6 +2128,11 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
   return DefWindowProcW(h, m, w, l);
 }
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
+  if (!LoadLibraryW(L"Msftedit.dll")) {
+    MessageBoxW(nullptr, L"Windows Rich Edit is unavailable.", L"QSO73",
+                MB_OK | MB_ICONERROR);
+    return 1;
+  }
   WSADATA data;
   WSAStartup(MAKEWORD(2, 2), &data);
   wchar_t path[32768];
@@ -1938,6 +2173,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
     }
   }
   CloseHandle(job);
+  linkChecks.stop();
   pskUploader.stop();
   WSACleanup();
   return 0;

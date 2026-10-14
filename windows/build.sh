@@ -8,7 +8,7 @@ mkdir -p build dist/QSO73-Windows/engine dist/QSO73-Windows/licenses
 make -C vendor/modem73-win -j2 CXX="$CXX" CC="$CC" WINDRES="$WINDRES" UI_FLAGS= VERSION=2.4.2
 "$CC" -O2 -c vendor/modem73-win/deps/cJSON.c -o build/cJSON.o
 "$WINDRES" assets/QSO73.rc -o build/QSO73-res.o
-"$CXX" -std=c++17 -O2 -Wall -Wextra -static -municode -mwindows -Isrc -Ivendor/modem73-win/deps src/main.cpp build/cJSON.o build/QSO73-res.o -lws2_32 -lole32 -lcomdlg32 -lgdi32 -o dist/QSO73-Windows/QSO73.exe
+"$CXX" -std=c++17 -O2 -Wall -Wextra -static -municode -mwindows -Isrc -Ivendor/modem73-win/deps src/main.cpp build/cJSON.o build/QSO73-res.o -lwinhttp -lws2_32 -lole32 -lcomdlg32 -lgdi32 -o dist/QSO73-Windows/QSO73.exe
 # Verify and unpack the pinned official Hamlib package, including adjacent DLLs.
 (cd vendor/hamlib && sha256sum -c SHA256SUMS.txt)
 mkdir -p build/hamlib dist/QSO73-Windows/hamlib/source
@@ -36,12 +36,12 @@ for lib in code dsp modem; do cp "vendor/modem73-win/deps/aicodix/$lib/LICENSE" 
 cp vendor/modem73-win/deps/hidapi/LICENSE* dist/QSO73-Windows/licenses/ 2>/dev/null || true
 cp vendor/modem73-win/deps/miniaudio.h dist/QSO73-Windows/licenses/miniaudio-source-and-license.h
 cp vendor/modem73-win/deps/cJSON.h dist/QSO73-Windows/licenses/cJSON-source-and-license.h
-printf 'QSO73 Windows test 6\nHamlib: official Windows x64 4.7.2, bundled CAT lifecycle\nmodem73-win: ed2a06b21ae2f2eef57e75dcf65013c298da7d6f + QSO73 shutdown, AX.25 sender metadata and UTF-8 manifest patches\n' > dist/QSO73-Windows/BUILD.txt
+printf 'QSO73 Windows test 7\nHamlib: official Windows x64 4.7.2, bundled CAT lifecycle\nmodem73-win: ed2a06b21ae2f2eef57e75dcf65013c298da7d6f + QSO73 shutdown, AX.25 sender metadata and UTF-8 manifest patches\n' > dist/QSO73-Windows/BUILD.txt
 if command -v zip >/dev/null; then # Archive only distributable files, never portable settings or test logs.
     package_tmp=$(mktemp -d)
     mkdir -p "$package_tmp/QSO73-Windows"
     cp -R dist/QSO73-Windows/{QSO73.exe,QSO73-Activity.exe,engine,hamlib,licenses,docs,START-HERE.md,CHAT_PROTOCOL.md,THIRD_PARTY_NOTICES.md,TEST_RESULTS.md,BUILD.txt} "$package_tmp/QSO73-Windows/"
-    (cd "$package_tmp" && zip -q -r QSO73-0.4.10-windows-x64-test6.zip QSO73-Windows)
-    mv "$package_tmp/QSO73-0.4.10-windows-x64-test6.zip" dist/
+    (cd "$package_tmp" && zip -q -r QSO73-0.4.11-windows-x64-test7.zip QSO73-Windows)
+    mv "$package_tmp/QSO73-0.4.11-windows-x64-test7.zip" dist/
     rm -rf "$package_tmp"; fi
 printf 'Portable folder: %s/dist/QSO73-Windows\n' "$PWD"
