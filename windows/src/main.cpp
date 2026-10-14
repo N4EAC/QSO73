@@ -32,7 +32,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.12 Windows test 8";
+constexpr const wchar_t *VERSION = L"0.4.12 Windows test 9";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -65,7 +65,10 @@ enum ControlID {
   AUTOHEARD,
   CHATLOG,
   CLEARMESSAGES,
-  CLEARDRAFT
+  CLEARDRAFT,
+  RXVU,
+  TXVU,
+  DECODINGINDICATOR
 };
 enum SettingID {
   CALL = 201,
@@ -1298,7 +1301,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.12-win-test8",
+                 " QSO73 v0.4.12-win-test9",
              true});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
@@ -1324,7 +1327,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 8 - ") +
+  std::string s = std::string("QSO73 Windows test 9 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1766,7 +1769,7 @@ void layout(int w, int h) {
 }
 void makeUI() {
   font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-  label(L"QSO73 Windows test 8", 15, 14, 275);
+  label(L"QSO73 Windows test 9", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104, 75);
@@ -1818,7 +1821,7 @@ void makeUI() {
   edit(FREQUENCY, 528, 80, 105, "");
   SendMessageW(controls[FREQUENCY], EM_SETCUEBANNER, 0, (LPARAM)L"MHz");
   button(SETFREQ, L"Set Frequency", 640, 80, 125);
-  decodingLabel = child(L"STATIC", L"Decoding", SS_OWNERDRAW, 1010, 86, 80, 22);
+  decodingLabel = child(L"STATIC", L"Decoding", DECODINGINDICATOR, 1010, 86, 80, 22, SS_OWNERDRAW);
   frequencyLabel = child(L"STATIC", L"CAT: unavailable", 0, 778, 86, 250, 24);
   child(L"BUTTON", L"Beacon", BEACON, 300, 120, 85, 25,
         BS_AUTOCHECKBOX | WS_TABSTOP);
@@ -1841,9 +1844,9 @@ void makeUI() {
   SendMessageW(controls[AUTOHEARD], BM_SETCHECK,
                settings.autoHeard ? BST_CHECKED : BST_UNCHECKED, 0);
   linkSafetyLabel = child(L"STATIC", L"", 0, 852, 155, 170, 24);
-  rxVULabel = child(L"STATIC", L"", SS_OWNERDRAW, 300, 184, 330, 32);
-  txVULabel = child(L"STATIC", L"", SS_OWNERDRAW, 650, 184, 330, 32);
-  history = child(MSFTEDIT_CLASS, L"", CHATLOG, 300, 188, 680, 350,
+  rxVULabel = child(L"STATIC", L"", RXVU, 300, 184, 330, 32, SS_OWNERDRAW);
+  txVULabel = child(L"STATIC", L"", TXVU, 650, 184, 330, 32, SS_OWNERDRAW);
+  history = child(MSFTEDIT_CLASS, L"", CHATLOG, 300, 226, 680, 312,
                   ES_MULTILINE | ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL);
   SendMessageW(history, EM_SETEVENTMASK, 0,
                SendMessageW(history, EM_GETEVENTMASK, 0, 0) | ENM_LINK);

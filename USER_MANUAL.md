@@ -2,13 +2,13 @@
 
 ## Amateur-radio chat with modem73
 
-**macOS 0.4.12 / Windows 0.4.12 test 8 | modem73 2.4.2**
+**macOS 0.4.12 / Windows 0.4.12 test 9 | modem73 2.4.2**
 
 Edition: October 14, 2026
 
 QSO73 combines a chat client with a local radio modem. Use it for plain packet chat, shared channels, addressed direct conversations, station beacons and channel invitations.
 
-Chapters 1-13 describe the macOS client in version 0.4.12; the channel walkthrough applies to both clients. See page 16 for Windows test 8 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
+Chapters 1-13 describe the macOS client in version 0.4.12; the channel walkthrough applies to both clients. See page 16 for Windows test 9 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
 
 ### Find what you need
 
@@ -515,7 +515,7 @@ All rooms share one radio frequency and transmit queue. Private chat is addresse
 
 # 15. Windows portable testing build
 
-The Windows companion is **0.4.12 test 8**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 8 adds Heard queries, UTC/color chat, checked web links and the beacon countdown alongside PSK Reporter, PING and the activity dashboard; these changes still need Windows verification.
+The Windows companion is **0.4.12 test 9**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 9 adds Heard queries, UTC/color chat, checked web links and the beacon countdown alongside PSK Reporter, PING and the activity dashboard; these changes still need Windows verification.
 
 ### Extract and configure
 

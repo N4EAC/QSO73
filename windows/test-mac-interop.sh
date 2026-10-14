@@ -50,3 +50,5 @@ clang++ -std=c++17 -O2 -Iwindows/vendor/modem73-win Tests/AudioMeterTests.cpp -o
 windows/build/audio-meter-tests
 clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/tests/audio_vu_test.cpp windows/build/cJSON-native.o -o windows/build/audio-vu-tests
 windows/build/audio-vu-tests
+
+python3 windows/tests/check_ui_contract.py
