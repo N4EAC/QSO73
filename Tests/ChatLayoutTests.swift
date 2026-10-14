@@ -27,6 +27,9 @@ import AppKit
         modem.rxAudioLevel = -38; modem.activeMode = "RDM-600S"; modem.frequency = "7.105000 MHz"; modem.radioMode = "PKTUSB"
         modem.audioLevels.update(["rx_audio_available":true, "rx_audio_rms_dbfs":-24.0, "rx_audio_peak_dbfs":-12.0, "tx_audio_available":true, "tx_audio_rms_dbfs":-15.0, "tx_audio_peak_dbfs":-2.0])
         capture("connected")
+        presentation.dockedVisible = true
+        capture("docked-activity")
+        presentation.dockedVisible = false
         modem.decoding = true
         capture("decoding")
         if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
