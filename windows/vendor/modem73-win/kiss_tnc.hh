@@ -74,6 +74,7 @@ struct TNCConfig {
     std::string audio_input_device = "default";
     std::string audio_output_device = "default";
     int sample_rate = 48000;
+    float rx_gain_db = 0.0f, tx_gain_db = 0.0f;
     float tx_drive = 1.0f;
     
     // Modem settings

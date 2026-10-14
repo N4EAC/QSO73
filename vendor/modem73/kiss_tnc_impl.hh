@@ -292,6 +292,7 @@ public:
             throw std::runtime_error("Failed to open audio capture");
         }
         audio_->set_tx_gain(config_.tx_drive);
+        if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
         
         std::cerr << "Audio input:  " << config_.audio_input_device << std::endl;
         std::cerr << "Audio output: " << config_.audio_output_device << std::endl;
@@ -565,6 +566,7 @@ public:
                     ui_log("(!) Audio unhealthy - attempting reconnect");
                     if (audio_->reconnect()) {
                         audio_->set_tx_gain(config_.tx_drive);
+        if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
                         ui_log("Audio reconnected");
                         audio_retry_backoff_ms = 5000;
                         next_audio_retry_ms = 0;
@@ -2375,6 +2377,7 @@ public:
             config_.tx_drive = result;
         }
         audio_->set_tx_gain(config_.tx_drive);
+        if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
         alc_tune_active_ = false;
         return result;
     }
@@ -2384,6 +2387,8 @@ public:
         std::vector<std::string> rejected;
         std::lock_guard<std::mutex> lock(config_mutex_);
         {
+            config_.rx_gain_db = new_config.rx_gain_db; config_.tx_gain_db = new_config.tx_gain_db;
+            if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
             config_.csma_enabled = new_config.csma_enabled;
             config_.csma_sync_only = new_config.csma_sync_only;
             config_.csma_fast_floor = new_config.csma_fast_floor;
@@ -2408,6 +2413,7 @@ public:
             if (config_.tx_drive != new_config.tx_drive) {
                 config_.tx_drive = new_config.tx_drive;
                 if (audio_) audio_->set_tx_gain(config_.tx_drive);
+        if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
             }
         }
         

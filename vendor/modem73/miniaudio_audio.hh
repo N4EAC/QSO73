@@ -206,9 +206,9 @@ public:
 
             if (available > 0) {
                 int to_write = std::min((int)available, frames - frames_written);
-                float g = tx_gain_.load();
+                float g = tx_gain_.load() * tx_boost_.load();
                 for (int i = 0; i < to_write; i++) {
-                    playback_buffer_[(write_pos + i) % RING_BUFFER_SIZE] = buffer[frames_written + i] * g;
+                    playback_buffer_[(write_pos + i) % RING_BUFFER_SIZE] = std::clamp(buffer[frames_written + i] * g, -1.0f, 1.0f);
                 }
                 playback_write_pos_ = (write_pos + to_write) % RING_BUFFER_SIZE;
                 frames_written += to_write;
@@ -226,6 +226,8 @@ public:
         return frames_written;
     }
 
+    void set_gain_db(float rx, float tx) { rx_gain_.store(std::pow(10.0f, rx / 20.0f)); tx_boost_.store(std::pow(10.0f, tx / 20.0f)); }
+    std::atomic<float> rx_gain_{1}, tx_boost_{1};
     void set_tx_gain(float g) { tx_gain_.store(g); }
 
     // check audio status
@@ -530,6 +532,7 @@ private:
         (void)output;
         MiniAudio* self = static_cast<MiniAudio*>(device->pUserData);
         const float* in = static_cast<const float*>(input);
+        const float gain = self->rx_gain_.load();
 
         size_t read_pos = self->capture_read_pos_.load();
         size_t write_pos = self->capture_write_pos_.load();
@@ -539,15 +542,16 @@ private:
         ma_uint32 to_write = std::min((ma_uint32)available, frame_count);
 
         for (ma_uint32 i = 0; i < to_write; i++) {
-            self->capture_buffer_[(write_pos + i) % CAPTURE_RING_SIZE] = in[i];
+            self->capture_buffer_[(write_pos + i) % CAPTURE_RING_SIZE] = std::clamp(in[i] * gain, -1.0f, 1.0f);
         }
 
-        self->rx_meter_.observe(in, frame_count, self->sample_rate_);
+        self->rx_meter_.observe(in, frame_count, self->sample_rate_, gain);
         self->capture_write_pos_ = (write_pos + to_write) % CAPTURE_RING_SIZE;
 
         float sum_sq = 0.0f;
         for (ma_uint32 i = 0; i < frame_count; i++) {
-            sum_sq += in[i] * in[i];
+            float sample = std::clamp(in[i] * gain, -1.0f, 1.0f);
+            sum_sq += sample * sample;
         }
         self->capture_energy_.store(self->capture_energy_.load() + sum_sq);
         self->capture_samples_.store(self->capture_samples_.load() + frame_count);

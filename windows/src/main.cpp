@@ -13,6 +13,7 @@
 // clang-format on
 #include "audio_vu.hpp"
 #include "chat_presentation.hpp"
+#include "contact_log.hpp"
 #include "dashboard.hpp"
 #include "heard_query.hpp"
 #include "link_transport.hpp"
@@ -32,7 +33,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.12 Windows test 9";
+constexpr const wchar_t *VERSION = L"0.4.13 Windows test 10";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -68,7 +69,14 @@ enum ControlID {
   CLEARDRAFT,
   RXVU,
   TXVU,
-  DECODINGINDICATOR
+  DECODINGINDICATOR,
+  PAGES,
+  APPLYGAIN,
+  NEWCONTACT,
+  EDITCONTACT,
+  EXPORTADIF,
+  CONTACTLIST,
+  STATUSINFO
 };
 enum SettingID {
   CALL = 201,
@@ -85,11 +93,27 @@ enum SettingID {
   CUSTOMTEXT,
   RIGMODEL,
   CATCOM,
-  CATBAUD
+  CATBAUD,
+  RXGAIN,
+  TXGAIN,
+  THEME
 };
 HWND win, history, composer, statusLabel, topicLabel, frequencyLabel,
     decodingLabel, reportingLabel, beaconCountdownLabel, linkSafetyLabel;
-HWND rxVULabel, txVULabel;
+HWND pages, rxVULabel, txVULabel, frequencyGroup, contactList;
+struct PageControl {
+  HWND handle;
+  int page;
+};
+std::vector<PageControl> pageControls;
+std::map<HWND, LONG_PTR> defaultButtonStyles;
+int creatingPage = -1, selectedPage = 0;
+std::vector<Contact> contactRecords;
+std::string contactLoadError;
+void changePage(int page);
+void contactEditor(bool edit);
+void exportADIF();
+void applyTheme();
 AudioLevels audioLevels;
 LinkCheckWorker linkChecks;
 uint64_t linkRequestId = 0;
@@ -113,6 +137,8 @@ struct Settings {
                                          custom;
   int drive = 25, rigPort = 4532, rigModel = 0, catBaud = 38400;
   std::string catCOM;
+  int rxGain = 0, txGain = 0;
+  std::string theme = "Default";
   bool autoPing = false, pskReporter = false, autoHeard = false;
 };
 Settings settings;
@@ -238,11 +264,26 @@ void comboSet(int id, const std::vector<std::string> &vals,
 }
 HWND child(const wchar_t *cls, const std::wstring &caption, int id, int x,
            int y, int w, int h, DWORD style = 0) {
+  int page = (id == START || id == STATUSINFO) ? -1 : creatingPage;
+  if (id == START) {
+    x = 950;
+    y = 5;
+  } else if (page >= 0) {
+    y += 42;
+    if (page == 0 && x >= 300)
+      x -= 280;
+  }
   auto a = CreateWindowExW(wcscmp(cls, L"EDIT") == 0 ? WS_EX_CLIENTEDGE : 0,
                            cls, caption.c_str(), WS_CHILD | WS_VISIBLE | style,
                            x, y, w, h, win, (HMENU)(INT_PTR)id,
                            GetModuleHandleW(nullptr), nullptr);
   SendMessageW(a, WM_SETFONT, (WPARAM)font, TRUE);
+  if (wcscmp(cls, L"BUTTON") == 0 &&
+      ((style & BS_TYPEMASK) == BS_PUSHBUTTON ||
+       (style & BS_TYPEMASK) == BS_DEFPUSHBUTTON))
+    defaultButtonStyles[a] = GetWindowLongPtrW(a, GWL_STYLE);
+  if (page >= 0)
+    pageControls.push_back({a, page});
   if (id)
     controls[id] = a;
   return a;
@@ -279,6 +320,9 @@ void saveSettings() {
   cJSON_AddBoolToObject(j.p, "autoPing", settings.autoPing);
   cJSON_AddBoolToObject(j.p, "autoHeard", settings.autoHeard);
   cJSON_AddBoolToObject(j.p, "pskReporter", settings.pskReporter);
+  cJSON_AddStringToObject(j.p, "theme", settings.theme.c_str());
+  cJSON_AddNumberToObject(j.p, "rxGain", settings.rxGain);
+  cJSON_AddNumberToObject(j.p, "txGain", settings.txGain);
   cJSON_AddNumberToObject(j.p, "drive", settings.drive);
   cJSON_AddNumberToObject(j.p, "rigPort", settings.rigPort);
   cJSON_AddNumberToObject(j.p, "rigModel", settings.rigModel);
@@ -301,6 +345,9 @@ void loadSettings() {
   std::string s((std::istreambuf_iterator<char>(f)), {});
   try {
     Json j(s);
+    settings.theme = j.str("theme") == "CP" ? "CP" : "Default";
+    settings.rxGain = int(std::clamp(j.num("rxGain"), -20.0, 20.0));
+    settings.txGain = int(std::clamp(j.num("txGain"), -20.0, 20.0));
     settings.autoPing = j.yes("autoPing");
     settings.autoHeard = j.yes("autoHeard");
     settings.pskReporter = j.yes("pskReporter");
@@ -333,6 +380,16 @@ void loadSettings() {
 }
 void readSettings() {
   Settings s;
+  auto gain = [](std::string text) {
+    size_t count;
+    int v = std::stoi(text, &count);
+    if (count != text.size() || v < -20 || v > 20)
+      throw std::runtime_error("Gain must be -20 to +20 dB.");
+    return v;
+  };
+  s.rxGain = gain(value(RXGAIN));
+  s.txGain = gain(value(TXGAIN));
+  s.theme = settings.theme;
   s.autoPing = settings.autoPing;
   s.autoHeard = settings.autoHeard;
   s.pskReporter = settings.pskReporter;
@@ -469,17 +526,21 @@ void refreshRig() {
   notify("Bundled Hamlib 4.7.2: " + std::to_string(modelCatalog.size()) +
          " models. Choose the radio's CAT COM port and matching baud.");
 }
+BOOL WINAPI ignoreChildShutdown(DWORD event) {
+  return event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT;
+}
 void closeChild(HANDLE &process, DWORD pid, DWORD signal) {
   if (!process)
     return;
   if (WaitForSingleObject(process, 0) != WAIT_OBJECT_0) {
     FreeConsole();
     if (AttachConsole(pid)) {
-      SetConsoleCtrlHandler(nullptr, TRUE);
-      GenerateConsoleCtrlEvent(signal, 0);
-      WaitForSingleObject(process, 3000);
+      if (SetConsoleCtrlHandler(ignoreChildShutdown, TRUE)) {
+        GenerateConsoleCtrlEvent(signal, 0);
+        WaitForSingleObject(process, 3000);
+      }
       FreeConsole();
-      SetConsoleCtrlHandler(nullptr, FALSE);
+      SetConsoleCtrlHandler(ignoreChildShutdown, FALSE);
     }
     if (WaitForSingleObject(process, 0) != WAIT_OBJECT_0)
       TerminateProcess(process, 1);
@@ -693,7 +754,10 @@ void network() {
         post({"sent", "", p});
       }
       for (auto &cmd : control)
-        post({"command", request(c, cmd), {}});
+        post({cmd.find("set_config") != std::string::npos ? "gain_result"
+                                                          : "command",
+              request(c, cmd),
+              {}});
       if (now() >= poll) {
         auto status = request(c, "{\"cmd\":\"get_status\"}");
         post({"status", status, {}});
@@ -825,6 +889,8 @@ void start() {
                              settings.family,
                              "--ptt",
                              settings.ptt};
+  a.insert(a.end(), {"--rx-gain-db", std::to_string(settings.rxGain),
+                     "--tx-gain-db", std::to_string(settings.txGain)});
   if (settings.family == "robust")
     a.insert(a.end(), {"--robust-mode", settings.mode});
   else if (settings.family == "mfsk")
@@ -882,11 +948,12 @@ void stop() {
   if (engine) {
     FreeConsole();
     if (AttachConsole(enginePID)) {
-      SetConsoleCtrlHandler(nullptr, TRUE);
-      GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0);
-      WaitForSingleObject(engine, 3000);
+      if (SetConsoleCtrlHandler(ignoreChildShutdown, TRUE)) {
+        GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0);
+        WaitForSingleObject(engine, 3000);
+      }
       FreeConsole();
-      SetConsoleCtrlHandler(nullptr, FALSE);
+      SetConsoleCtrlHandler(ignoreChildShutdown, FALSE);
     }
     if (WaitForSingleObject(engine, 0) != WAIT_OBJECT_0)
       TerminateProcess(engine, 1);
@@ -965,7 +1032,7 @@ void showHistory() {
       format.dwMask = CFM_COLOR | CFM_LINK | CFM_UNDERLINE;
       format.dwEffects = 0;
       auto tone = chatTone(e);
-      auto rgb = chatRGB(tone);
+      auto rgb = chatRGB(tone, settings.theme == "CP");
       format.crTextColor = RGB(rgb.red, rgb.green, rgb.blue);
       SendMessageW(history, EM_SETCHARFORMAT, SCF_SELECTION,
                    reinterpret_cast<LPARAM>(&format));
@@ -1301,7 +1368,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.12-win-test9",
+                 " QSO73 v0.4.13-win-test10",
              true});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
@@ -1327,7 +1394,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 9 - ") +
+  std::string s = std::string("QSO73 Windows test 10 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1453,6 +1520,7 @@ void exportChat() {
       f << "[" << e.room << "] " << chatLine(e);
   }
 }
+#include "ui_extras.hpp"
 void pollUI() {
   std::deque<Event> pending;
   {
@@ -1493,7 +1561,8 @@ void pollUI() {
         rawStatus = e.data;
         statusTime = now();
         audioReady = j.yes("audio_connected");
-        if (cJSON_GetObjectItemCaseSensitive(j.p, "rx_audio_available")) audioLevels.update(j, now());
+        if (cJSON_GetObjectItemCaseSensitive(j.p, "rx_audio_available"))
+          audioLevels.update(j, now());
         rigReady = j.yes("rigctl_connected");
         channelState = j.str("channel_state");
         activityHistory.push_back(channelState);
@@ -1580,6 +1649,10 @@ void pollUI() {
         modemEvents.push_back(e.data);
         if (modemEvents.size() > 100)
           modemEvents.pop_front();
+      } else if (e.kind == "gain_result") {
+        Json j(e.data);
+        notify(j.yes("ok") ? "Audio gain applied."
+                           : "Audio gain rejected: " + e.data);
       } else if (e.kind == "command") {
         Json j(e.data);
         notify(j.yes("ok") ? "CAT response: " + j.str("response")
@@ -1654,7 +1727,7 @@ void pollUI() {
       pskBatch = pskReports.reports;
       try {
         auto bytes = PSKReportQueue::encode(
-            settings.call, settings.grid, "QSO73 0.4.12 / modem73 2.4.2",
+            settings.call, settings.grid, "QSO73 0.4.13 / modem73 2.4.2",
             pskBatch, pskSequence, pskDomain, uint32_t(epoch()));
         pskSending = true;
         pskStatus = "PSK: submitting via Internet";
@@ -1673,7 +1746,11 @@ void pollUI() {
   InvalidateRect(rxVULabel, nullptr, FALSE);
   InvalidateRect(txVULabel, nullptr, FALSE);
   EnableWindow(controls[CLEARDRAFT], !text(composer).empty());
-  EnableWindow(controls[CLEARMESSAGES], std::any_of(rooms.entries.begin(), rooms.entries.end(), [](const Entry &entry) { return entry.room == rooms.selected; }));
+  EnableWindow(controls[CLEARMESSAGES],
+               std::any_of(rooms.entries.begin(), rooms.entries.end(),
+                           [](const Entry &entry) {
+                             return entry.room == rooms.selected;
+                           }));
   put(reportingLabel, pskStatus);
   put(beaconCountdownLabel,
       beaconCountdown(beaconOn, beaconPending,
@@ -1693,7 +1770,7 @@ void pollUI() {
   }
   if (!connected) {
     audioLevels = AudioLevels{};
-  audioReady = false;
+    audioReady = false;
     statusTime = 0;
   }
   if (announceOn && rooms.hasParticipant(announceRoom, now())) {
@@ -1741,10 +1818,14 @@ void modes() {
   comboSet(MODE, list, chosen);
 }
 void layout(int w, int h) {
-  int left = 300, right = w - left - 15;
-  MoveWindow(history, left, 226, right, h - 403, TRUE);
-  MoveWindow(rxVULabel, left, 184, (right - 16) / 2, 32, TRUE);
-  MoveWindow(txVULabel, left + (right + 16) / 2, 184, (right - 16) / 2, 32, TRUE);
+  int left = 20, right = w - left - 15;
+  MoveWindow(pages, 5, 4, std::max(500, w - 170), 30, TRUE);
+  MoveWindow(controls[START], w - 155, 5, 140, 27, TRUE);
+  MoveWindow(contactList, 20, 190, w - 40, std::max(100, h - 250), TRUE);
+  MoveWindow(history, left, 268, right, h - 445, TRUE);
+  MoveWindow(rxVULabel, left, 226, (right - 16) / 2, 32, TRUE);
+  MoveWindow(txVULabel, left + (right + 16) / 2, 226, (right - 16) / 2, 32,
+             TRUE);
   MoveWindow(composer, left, h - 167, right - 115, 65, TRUE);
   MoveWindow(controls[SEND], w - 120, h - 167, 105, 35, TRUE);
   MoveWindow(controls[CLEARDRAFT], w - 120, h - 128, 105, 26, TRUE);
@@ -1753,23 +1834,37 @@ void layout(int w, int h) {
     MoveWindow(controls[id], left + (id - CQ) * 112, h - 95, 105, 27, TRUE);
   MoveWindow(controls[EXPORT], left + 455, h - 95, 110, 27, TRUE);
   MoveWindow(controls[ACTIVITY], left + 570, h - 95, 145, 27, TRUE);
-  MoveWindow(controls[ROOMS], left + 90, 14, std::max(190, right - 490), 240,
+  MoveWindow(controls[ROOMS], left + 90, 56, std::max(190, right - 490), 240,
              TRUE);
-  MoveWindow(controls[NEWROOM], w - 390, 14, 200, 25, TRUE);
-  MoveWindow(controls[JOIN], w - 185, 14, 170, 27, TRUE);
-  MoveWindow(topicLabel, left, 49, right - 325, 22, TRUE);
-  MoveWindow(controls[CLEARMESSAGES], w - 320, 45, 80, 27, TRUE);
-  MoveWindow(linkSafetyLabel, 852, 155, std::max(80, w - 867), 24, TRUE);
-  MoveWindow(beaconCountdownLabel, 838, 123, std::max(100, w - 853), 24, TRUE);
-  MoveWindow(decodingLabel, w - 95, 86, 80, 22, TRUE);
-  MoveWindow(frequencyLabel, 778, 86, std::max(100, w - 888), 24, TRUE);
-  MoveWindow(controls[TOPIC], w - 235, 45, 70, 27, TRUE);
-  MoveWindow(controls[USERS], w - 160, 45, 70, 27, TRUE);
-  MoveWindow(controls[LEAVE], w - 85, 45, 70, 27, TRUE);
+  MoveWindow(controls[NEWROOM], w - 390, 56, 200, 25, TRUE);
+  MoveWindow(controls[JOIN], w - 185, 56, 170, 27, TRUE);
+  MoveWindow(topicLabel, left, 91, right - 325, 22, TRUE);
+  MoveWindow(controls[CLEARMESSAGES], w - 320, 87, 80, 27, TRUE);
+  MoveWindow(linkSafetyLabel, 572, 197, std::max(80, w - 587), 24, TRUE);
+  MoveWindow(beaconCountdownLabel, 558, 165, std::max(100, w - 573), 24, TRUE);
+  MoveWindow(frequencyGroup, 255, 112, std::max(440, w - 355), 46, TRUE);
+  MoveWindow(controls[FREQUENCY], 285, 122, 105, 25, TRUE);
+  MoveWindow(controls[SETFREQ], 397, 122, 125, 27, TRUE);
+  MoveWindow(decodingLabel, w - 95, 128, 80, 22, TRUE);
+  MoveWindow(frequencyLabel, 537, 128, std::max(100, w - 647), 24, TRUE);
+  MoveWindow(controls[TOPIC], w - 235, 87, 70, 27, TRUE);
+  MoveWindow(controls[USERS], w - 160, 87, 70, 27, TRUE);
+  MoveWindow(controls[LEAVE], w - 85, 87, 70, 27, TRUE);
 }
 void makeUI() {
   font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-  label(L"QSO73 Windows test 9", 15, 14, 275);
+  INITCOMMONCONTROLSEX common{sizeof(common), ICC_TAB_CLASSES};
+  InitCommonControlsEx(&common);
+  pages = child(WC_TABCONTROLW, L"", PAGES, 5, 4, 900, 30,
+                TCS_OWNERDRAWFIXED | WS_TABSTOP);
+  for (auto title : {L"Chat", L"Setup", L"Contact Log"}) {
+    TCITEMW item{};
+    item.mask = TCIF_TEXT;
+    item.pszText = const_cast<wchar_t *>(title);
+    TabCtrl_InsertItem(pages, TabCtrl_GetItemCount(pages), &item);
+  }
+  creatingPage = 1;
+  label(L"QSO73 Windows test 10", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104, 75);
@@ -1805,6 +1900,22 @@ void makeUI() {
   button(START, L"Start Modem", 150, 636, 125);
   reportingLabel = child(L"STATIC", L"PSK Reporter: off", 0, 15, 676, 280, 25);
   label(L"Hamlib starts automatically with rigctl PTT.", 15, 702, 280);
+  label(L"Audio gain / amplification", 330, 35, 430);
+  label(L"RX gain dB (-20 to +20)", 330, 74, 400);
+  edit(RXGAIN, 330, 98, 130, std::to_string(settings.rxGain));
+  label(L"TX gain dB (-20 to +20)", 330, 140, 400);
+  edit(TXGAIN, 330, 164, 130, std::to_string(settings.txGain));
+  button(APPLYGAIN, L"Apply Gain", 480, 164, 130);
+  label(L"0 dB = unity; +20 dB = 10x amplitude. Excess gain clips.", 330, 207,
+        650);
+  label(L"TX gain multiplies TX audio %. Watch RX/TX peak meters.", 330, 235,
+        650);
+  label(L"Theme", 330, 283, 100);
+  combo(THEME, 330, 308, 280, {"Default", "CP"}, settings.theme);
+  label(L"CP = Cyberpunk. Theme changes apply immediately.", 330, 347, 650);
+  label(L"Configure the radio here; chat and audio meters are on Chat.", 330,
+        408, 650);
+  creatingPage = 0;
   label(L"Conversation", 300, 18, 88);
   combo(ROOMS, 390, 14, 220, {"Radio Chat"}, "Radio Chat");
   edit(NEWROOM, 620, 14, 200, "");
@@ -1816,12 +1927,15 @@ void makeUI() {
   button(TOPIC, L"Topic...", 765, 45, 70);
   button(USERS, L"Users...", 840, 45, 70);
   button(LEAVE, L"Leave", 915, 45, 70);
+  frequencyGroup = child(L"BUTTON", L"Radio frequency · MHz", 0, 535, 70, 540,
+                         46, BS_GROUPBOX);
   label(L"To", 300, 86, 35);
   combo(TO, 338, 80, 180, {"QST"}, "QST", true);
   edit(FREQUENCY, 528, 80, 105, "");
   SendMessageW(controls[FREQUENCY], EM_SETCUEBANNER, 0, (LPARAM)L"MHz");
   button(SETFREQ, L"Set Frequency", 640, 80, 125);
-  decodingLabel = child(L"STATIC", L"Decoding", DECODINGINDICATOR, 1010, 86, 80, 22, SS_OWNERDRAW);
+  decodingLabel = child(L"STATIC", L"Decoding", DECODINGINDICATOR, 1010, 86, 80,
+                        22, SS_OWNERDRAW);
   frequencyLabel = child(L"STATIC", L"CAT: unavailable", 0, 778, 86, 250, 24);
   child(L"BUTTON", L"Beacon", BEACON, 300, 120, 85, 25,
         BS_AUTOCHECKBOX | WS_TABSTOP);
@@ -1863,43 +1977,118 @@ void makeUI() {
   button(CUSTOM, L"F4 - Custom", 636, 627, 105);
   button(EXPORT, L"Export Chat", 755, 627, 110);
   button(ACTIVITY, L"Modem Activity", 870, 627, 145);
-  statusLabel = child(L"STATIC", L"Offline", 0, 300, 667, 680, 32);
+  statusLabel = child(L"STATIC", L"Offline", STATUSINFO, 300, 667, 680, 32);
+  creatingPage = 2;
+  label(L"ADIF Contact Log — review completed contacts before saving", 20, 18,
+        900);
+  button(NEWCONTACT, L"New Contact", 20, 50, 130);
+  button(EDITCONTACT, L"Edit Selected", 160, 50, 130);
+  button(EXPORTADIF, L"Export ADIF...", 300, 50, 140);
+  label(L"Export .adi, then use TQSL to sign and upload to LoTW. Mode: PKT.",
+        20, 96, 950);
+  contactList = child(L"LISTBOX", L"", CONTACTLIST, 20, 148, 960, 570,
+                      WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY);
+  creatingPage = -1;
+  changePage(0);
+  applyTheme();
   rebuildRooms();
   SetTimer(win, 1, 200, nullptr);
   SetTimer(win, 2, 100, nullptr);
 }
 LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+  if (m == WM_DRAWITEM &&
+      (reinterpret_cast<DRAWITEMSTRUCT *>(l)->CtlType == ODT_TAB ||
+       (settings.theme == "CP" &&
+        reinterpret_cast<DRAWITEMSTRUCT *>(l)->CtlType == ODT_BUTTON))) {
+    auto draw = reinterpret_cast<DRAWITEMSTRUCT *>(l);
+    bool cp = settings.theme == "CP";
+    auto brush =
+        CreateSolidBrush(cp ? RGB(30, 17, 57) : GetSysColor(COLOR_BTNFACE));
+    FillRect(draw->hDC, &draw->rcItem, brush);
+    DeleteObject(brush);
+    brush =
+        CreateSolidBrush(cp ? RGB(236, 61, 205) : GetSysColor(COLOR_3DSHADOW));
+    FrameRect(draw->hDC, &draw->rcItem, brush);
+    DeleteObject(brush);
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, draw->itemState & ODS_DISABLED ? RGB(130, 130, 145)
+                            : cp                           ? RGB(99, 240, 245)
+                                 : GetSysColor(COLOR_BTNTEXT));
+    SelectObject(draw->hDC, font);
+    std::wstring caption;
+    if (draw->CtlType == ODT_TAB) {
+      const wchar_t *titles[] = {L"Chat", L"Setup", L"Contact Log"};
+      if (draw->itemID < 3)
+        caption = titles[draw->itemID];
+    } else
+      caption = wide(text(draw->hwndItem));
+    DrawTextW(draw->hDC, caption.c_str(), -1, &draw->rcItem,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (draw->CtlType == ODT_TAB && int(draw->itemID) == selectedPage) {
+      RECT marker = draw->rcItem;
+      marker.top = marker.bottom - 3;
+      auto accent = CreateSolidBrush(cp ? RGB(99, 240, 245) : RGB(0, 100, 200));
+      FillRect(draw->hDC, &marker, accent);
+      DeleteObject(accent);
+    }
+    if (draw->itemState & ODS_FOCUS)
+      DrawFocusRect(draw->hDC, &draw->rcItem);
+    return TRUE;
+  }
   if (m == WM_DRAWITEM) {
     auto draw = reinterpret_cast<DRAWITEMSTRUCT *>(l);
     if (draw->hwndItem == rxVULabel || draw->hwndItem == txVULabel) {
       bool tx = draw->hwndItem == txVULabel;
       auto reading = audioLevels.reading(tx, connected && audioReady, now());
-      FillRect(draw->hDC, &draw->rcItem, GetSysColorBrush(COLOR_BTNFACE));
-      SetBkMode(draw->hDC, TRANSPARENT); SetTextColor(draw->hDC, GetSysColor(COLOR_BTNTEXT));
+      auto background =
+          CreateSolidBrush(settings.theme == "CP" ? RGB(18, 12, 38)
+                                                  : GetSysColor(COLOR_BTNFACE));
+      FillRect(draw->hDC, &draw->rcItem, background);
+      DeleteObject(background);
+      SetBkMode(draw->hDC, TRANSPARENT);
+      SetTextColor(draw->hDC, settings.theme == "CP"
+                                  ? RGB(99, 240, 245)
+                                  : GetSysColor(COLOR_BTNTEXT));
       SelectObject(draw->hDC, font);
       std::string label = tx ? "TX audio" : "RX audio";
-      label += reading ? "  " + std::to_string(int(std::round(reading->rms))) + " dBFS" : "  --";
-      auto text = wide(label); RECT title = draw->rcItem; title.bottom = title.top + 17;
+      label += reading ? "  " + std::to_string(int(std::round(reading->rms))) +
+                             " dBFS"
+                       : "  --";
+      auto text = wide(label);
+      RECT title = draw->rcItem;
+      title.bottom = title.top + 17;
       DrawTextW(draw->hDC, text.c_str(), -1, &title, DT_LEFT | DT_SINGLELINE);
-      RECT bar = draw->rcItem; bar.top += 20; bar.bottom = bar.top + 8;
+      RECT bar = draw->rcItem;
+      bar.top += 20;
+      bar.bottom = bar.top + 8;
       FillRect(draw->hDC, &bar, GetSysColorBrush(COLOR_3DSHADOW));
       int width = bar.right - bar.left;
       if (reading) {
         int filled = int(width * AudioVUReading::fraction(reading->rms));
         int edges[] = {0, int(width * 0.8), int(width * 0.95), width};
-        COLORREF colors[] = {RGB(0,135,65), RGB(220,165,0), RGB(215,45,45)};
+        COLORREF colors[] = {RGB(0, 135, 65), RGB(220, 165, 0),
+                             RGB(215, 45, 45)};
         for (int segment = 0; segment < 3; ++segment) {
-          int right = std::min(filled, edges[segment+1]);
+          int right = std::min(filled, edges[segment + 1]);
           if (right > edges[segment]) {
             auto brush = CreateSolidBrush(colors[segment]);
-            RECT slice{bar.left+edges[segment],bar.top,bar.left+right,bar.bottom};
-            FillRect(draw->hDC,&slice,brush); DeleteObject(brush);
+            RECT slice{bar.left + edges[segment], bar.top, bar.left + right,
+                       bar.bottom};
+            FillRect(draw->hDC, &slice, brush);
+            DeleteObject(brush);
           }
         }
-        int peak = std::clamp(int(width * AudioVUReading::fraction(reading->peak)), 0, std::max(0,width-2));
-        RECT marker{bar.left+peak,bar.top-1,bar.left+peak+2,bar.bottom+1};
-        auto brush = CreateSolidBrush(reading->peak >= -3 ? RGB(215,45,45) : GetSysColor(COLOR_BTNTEXT));
-        FillRect(draw->hDC,&marker,brush); DeleteObject(brush);
+        int peak =
+            std::clamp(int(width * AudioVUReading::fraction(reading->peak)), 0,
+                       std::max(0, width - 2));
+        RECT marker{bar.left + peak, bar.top - 1, bar.left + peak + 2,
+                    bar.bottom + 1};
+        auto brush = CreateSolidBrush(reading->peak >= -3 ? RGB(215, 45, 45)
+                                      : settings.theme == "CP"
+                                          ? RGB(230, 230, 245)
+                                          : GetSysColor(COLOR_BTNTEXT));
+        FillRect(draw->hDC, &marker, brush);
+        DeleteObject(brush);
       }
       return TRUE;
     }
@@ -1922,6 +2111,23 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     SelectObject(item->hDC, old);
     return TRUE;
   }
+  if (settings.theme == "CP" &&
+      (m == WM_CTLCOLORSTATIC || m == WM_CTLCOLOREDIT ||
+       m == WM_CTLCOLORLISTBOX || m == WM_CTLCOLORBTN)) {
+    auto dc = reinterpret_cast<HDC>(w);
+    SetTextColor(dc, RGB(99, 240, 245));
+    SetBkColor(dc, RGB(18, 12, 38));
+    static HBRUSH brush = CreateSolidBrush(RGB(18, 12, 38));
+    return reinterpret_cast<LRESULT>(brush);
+  }
+  if (m == WM_ERASEBKGND && settings.theme == "CP") {
+    RECT r;
+    GetClientRect(h, &r);
+    auto brush = CreateSolidBrush(RGB(10, 7, 24));
+    FillRect(reinterpret_cast<HDC>(w), &r, brush);
+    DeleteObject(brush);
+    return 1;
+  }
   if (m == WM_CREATE) {
     win = h;
     makeUI();
@@ -1933,7 +2139,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
   }
   if (m == WM_GETMINMAXINFO) {
     auto p = (MINMAXINFO *)l;
-    p->ptMinTrackSize = {1050, 820};
+    p->ptMinTrackSize = {1050, 860};
     return 0;
   }
   if (m == WM_TIMER) {
@@ -1947,6 +2153,11 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
       return 0;
     }
     pollUI();
+    return 0;
+  }
+  if (m == WM_NOTIFY && reinterpret_cast<NMHDR *>(l)->hwndFrom == pages &&
+      reinterpret_cast<NMHDR *>(l)->code == TCN_SELCHANGE) {
+    changePage(TabCtrl_GetCurSel(pages));
     return 0;
   }
   if (m == WM_NOTIFY && reinterpret_cast<NMHDR *>(l)->hwndFrom == history &&
@@ -1987,7 +2198,11 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         return 0;
       }
       if (HIWORD(w) == CBN_SELCHANGE) {
-        if (id == ROOMS) {
+        if (id == THEME) {
+          settings.theme = value(THEME) == "CP" ? "CP" : "Default";
+          saveSettings();
+          applyTheme();
+        } else if (id == ROOMS) {
           int i = int(SendMessageW(controls[id], CB_GETCURSEL, 0, 0));
           if (i >= 0 && i < int(roomNames.size()))
             selectRoom(roomNames[i]);
@@ -1998,6 +2213,43 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
       if (HIWORD(w) != BN_CLICKED)
         return 0;
       switch (id) {
+      case NEWCONTACT:
+        contactEditor(false);
+        break;
+      case EDITCONTACT:
+        contactEditor(true);
+        break;
+      case EXPORTADIF:
+        exportADIF();
+        break;
+      case APPLYGAIN: {
+        auto number = [](std::string s) {
+          size_t n;
+          int value = std::stoi(s, &n);
+          if (n != s.size() || value < -20 || value > 20)
+            throw std::runtime_error("Gain must be -20 to +20 dB.");
+          return value;
+        };
+        int rx = number(value(RXGAIN)), tx = number(value(TXGAIN));
+        if (connected) {
+          if (channelState != "idle")
+            throw std::runtime_error(
+                "Wait until the modem is idle before changing gain.");
+          Json config(rawConfig.empty() ? "{}" : rawConfig);
+          if (!cJSON_GetObjectItemCaseSensitive(config.p, "rx_gain_db"))
+            throw std::runtime_error(
+                "The selected engine does not support gain controls.");
+          std::lock_guard<std::mutex> lock(mutex);
+          commands.push_back(
+              "{\"cmd\":\"set_config\",\"rx_gain_db\":" + std::to_string(rx) +
+              ",\"tx_gain_db\":" + std::to_string(tx) + "}");
+        }
+        settings.rxGain = rx;
+        settings.txGain = tx;
+        saveSettings();
+        notify("Audio gain saved/applied.");
+        break;
+      }
       case START:
         if (running || engine)
           stop();
@@ -2069,12 +2321,20 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         saveSettings();
         break;
       case CLEARMESSAGES:
-        ++linkRequestId; linkChecks.cancel(); put(linkSafetyLabel, "");
-        rooms.entries.erase(std::remove_if(rooms.entries.begin(), rooms.entries.end(), [](const Entry &entry) { return entry.room == rooms.selected; }), rooms.entries.end());
+        ++linkRequestId;
+        linkChecks.cancel();
+        put(linkSafetyLabel, "");
+        rooms.entries.erase(
+            std::remove_if(rooms.entries.begin(), rooms.entries.end(),
+                           [](const Entry &entry) {
+                             return entry.room == rooms.selected;
+                           }),
+            rooms.entries.end());
         showHistory();
         break;
       case CLEARDRAFT:
-        put(composer, ""); drafts[rooms.selected].clear();
+        put(composer, "");
+        drafts[rooms.selected].clear();
         break;
       case AUTOHEARD:
         settings.autoHeard =
@@ -2211,6 +2471,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
   base = path;
   base = base.substr(0, base.find_last_of(L"\\/") + 1);
   loadSettings();
+  loadContacts();
   job = CreateJobObjectW(nullptr, nullptr);
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
   limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -2228,7 +2489,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
   auto h = CreateWindowExW(0, L"QSO73Portable",
                            (std::wstring(L"QSO73 - ") + VERSION).c_str(),
                            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                           1100, 850, nullptr, nullptr, instance, nullptr);
+                           1100, 900, nullptr, nullptr, instance, nullptr);
   ShowWindow(h, show);
   UpdateWindow(h);
   MSG msg;

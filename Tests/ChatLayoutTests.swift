@@ -52,6 +52,16 @@ import AppKit
         guard modem.entries.count == 1, modem.entries[0].conversation == "TEST2" else { fatalError("Clear affected another conversation") }
         modem.entries = saved
         print("PASS: Clear preserves other conversations")
+        let previousTheme = workspace.theme
+        workspace.theme = "CP"
+        capture("cyberpunk-chat")
+        workspace.theme = previousTheme
+        let contactHost = NSHostingView(rootView: ContactLogView(log:workspace.contacts).environmentObject(workspace).environmentObject(modem).frame(width:760,height:760))
+        let contactWindow = NSWindow(contentRect:NSRect(x:0,y:0,width:760,height:760),styleMask:[.titled],backing:.buffered,defer:false)
+        contactWindow.contentView=contactHost
+        RunLoop.main.run(until:Date().addingTimeInterval(0.5));contactHost.layoutSubtreeIfNeeded()
+        guard contactHost.fittingSize.height<=761 else{fatalError("Contact editor overflow")}
+        print("PASS: bounded contact creator and Cyberpunk layout")
         modem.audioRoute = String(repeating: "Long named radio device / route description ", count: 8)
         capture("long-route")
         let settingsHost = NSHostingView(rootView: SettingsView().environmentObject(workspace).environmentObject(modem).environmentObject(updates).frame(width: 760, height: 760))

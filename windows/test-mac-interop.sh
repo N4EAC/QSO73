@@ -52,3 +52,11 @@ clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/t
 windows/build/audio-vu-tests
 
 python3 windows/tests/check_ui_contract.py
+
+clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/tests/contact_log_test.cpp windows/build/cJSON-native.o -o windows/build/contact-log-tests
+windows/build/contact-log-tests
+swiftc -swift-version 5 -module-cache-path build/module-cache Sources/Protocol.swift Sources/ContactLog.swift Tests/ContactLogTests.swift -o build/contact-log-tests
+build/contact-log-tests
+cmp /tmp/qso73-contact-mac.adi /tmp/qso73-contact-windows.adi
+
+python3 Tests/check_adif.py

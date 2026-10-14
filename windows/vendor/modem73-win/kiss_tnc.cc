@@ -312,6 +312,7 @@ public:
             throw std::runtime_error("Failed to open audio capture");
         }
         audio_->set_tx_gain(config_.tx_drive);
+        if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
         
         std::cerr << "Audio input:  " << config_.audio_input_device << std::endl;
         std::cerr << "Audio output: " << config_.audio_output_device << std::endl;
@@ -533,6 +534,7 @@ public:
                     ui_log("(!) Audio unhealthy - attempting reconnect");
                     if (audio_->reconnect()) {
                         audio_->set_tx_gain(config_.tx_drive);
+        if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
                         ui_log("Audio reconnected");
                         audio_retry_backoff_ms = 5000;
                         next_audio_retry_ms = 0;
@@ -2416,6 +2418,7 @@ public:
             config_.tx_drive = result;
         }
         audio_->set_tx_gain(config_.tx_drive);
+        if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
         alc_tune_active_ = false;
         return result;
     }
@@ -2425,6 +2428,8 @@ public:
         std::vector<std::string> rejected;
         std::lock_guard<std::mutex> lock(config_mutex_);
         {
+            config_.rx_gain_db = new_config.rx_gain_db; config_.tx_gain_db = new_config.tx_gain_db;
+            if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
             config_.csma_enabled = new_config.csma_enabled;
             config_.csma_sync_only = new_config.csma_sync_only;
             config_.csma_fast_floor = new_config.csma_fast_floor;
@@ -2449,6 +2454,7 @@ public:
             if (config_.tx_drive != new_config.tx_drive) {
                 config_.tx_drive = new_config.tx_drive;
                 if (audio_) audio_->set_tx_gain(config_.tx_drive);
+        if (audio_) audio_->set_gain_db(config_.rx_gain_db, config_.tx_gain_db);
             }
         }
         
@@ -3017,6 +3023,8 @@ void print_help(const char* prog) {
               << "  -d, --device DEV        Audio device for both capture and playback\n"
               << "      --input-device DEV  Audio capture device\n"
               << "      --output-device DEV Audio playback device\n"
+              << "      --rx-gain-db DB     RX gain/amplification -20 to +20 dB\n"
+              << "      --tx-gain-db DB     Additional TX gain -20 to +20 dB\n"
               << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
               << "\nModem:\n"
               << "  -c, --callsign CALL     Callsign (default: N0CALL)\n"
@@ -3203,6 +3211,12 @@ int main(int argc, char** argv) {
         } else if (arg == "--output-device" && i + 1 < argc) {
             config.audio_output_device = argv[++i];
             cli_set.insert("audio_output");
+        } else if (arg == "--rx-gain-db" && i + 1 < argc) {
+            config.rx_gain_db = clamp_arg_f("--rx-gain-db", argv[++i], -20, 20);
+            cli_set.insert("rx_gain_db");
+        } else if (arg == "--tx-gain-db" && i + 1 < argc) {
+            config.tx_gain_db = clamp_arg_f("--tx-gain-db", argv[++i], -20, 20);
+            cli_set.insert("tx_gain_db");
         } else if (arg == "--tx-level" && i + 1 < argc) {
             config.tx_drive = clamp_arg("--tx-level", argv[++i], 5, 100) / 100.0f;
             cli_set.insert("tx_drive");
@@ -4093,6 +4107,8 @@ int main(int argc, char** argv) {
                 cJSON_AddNumberToObject(j, "csma_responder_dither", cfg.csma_responder_dither);
                 cJSON_AddNumberToObject(j, "csma_burst", cfg.csma_burst);
                 cJSON_AddBoolToObject(j, "tx_lead_tone", cfg.tx_lead_tone);
+                cJSON_AddNumberToObject(j, "rx_gain_db", cfg.rx_gain_db);
+                cJSON_AddNumberToObject(j, "tx_gain_db", cfg.tx_gain_db);
                 cJSON_AddNumberToObject(j, "tx_drive", cfg.tx_drive);
                 cJSON_AddBoolToObject(j, "tx_blanking_enabled", cfg.tx_blanking_enabled);
                 cJSON_AddBoolToObject(j, "fragmentation_enabled", cfg.fragmentation_enabled);
@@ -4105,6 +4121,12 @@ int main(int argc, char** argv) {
 
             ctrl_iface.set_config = [&tnc](cJSON* params) -> bool {
                 TNCConfig new_config = tnc.get_config();
+                if ((tnc.is_transmitting() || tnc.is_receiving()) && (cJSON_GetObjectItemCaseSensitive(params,"rx_gain_db") || cJSON_GetObjectItemCaseSensitive(params,"tx_gain_db"))) return false;
+                for (auto key : {"rx_gain_db", "tx_gain_db"}) {
+                    auto value = cJSON_GetObjectItemCaseSensitive(params, key);
+                    if (value && (!cJSON_IsNumber(value) || !std::isfinite(value->valuedouble) || value->valuedouble < -20 || value->valuedouble > 20)) return false;
+                    if (value) (std::string(key)=="rx_gain_db" ? new_config.rx_gain_db : new_config.tx_gain_db) = float(value->valuedouble);
+                }
 
                 cJSON* item;
                 if ((item = cJSON_GetObjectItemCaseSensitive(params, "modem_type")) && cJSON_IsNumber(item)

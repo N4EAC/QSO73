@@ -9,7 +9,8 @@ enum class ChatTone { own, automatic, received };
 struct ChatRGB {
   int red, green, blue;
 };
-inline ChatRGB chatRGB(ChatTone tone) {
+inline ChatRGB chatRGB(ChatTone tone, bool cyberpunk = false) {
+  if(cyberpunk) return tone==ChatTone::own ? ChatRGB{103,182,255} : tone==ChatTone::automatic ? ChatRGB{255,192,100} : ChatRGB{119,230,163};
   return tone == ChatTone::automatic ? ChatRGB{143, 57, 0}
          : tone == ChatTone::own     ? ChatRGB{7, 85, 176}
                                      : ChatRGB{0, 103, 53};

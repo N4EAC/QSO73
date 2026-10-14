@@ -2,13 +2,13 @@
 
 ## Amateur-radio chat with modem73
 
-**macOS 0.4.12 / Windows 0.4.12 test 9 | modem73 2.4.2**
+**macOS 0.4.13 / Windows 0.4.13 test 10 | modem73 2.4.2**
 
 Edition: October 14, 2026
 
 QSO73 combines a chat client with a local radio modem. Use it for plain packet chat, shared channels, addressed direct conversations, station beacons and channel invitations.
 
-Chapters 1-13 describe the macOS client in version 0.4.12; the channel walkthrough applies to both clients. See page 16 for Windows test 9 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
+Chapters 1-13 describe the macOS client in version 0.4.13; the channel walkthrough applies to both clients. See page 16 for Windows test 10 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
 
 ### Find what you need
 
@@ -34,6 +34,8 @@ Chapters 1-13 describe the macOS client in version 0.4.12; the channel walkthrou
 | 19 | Heard queries: recent and specific callsigns |
 | 20 | UTC colors, checked links and Windows beacon countdown |
 | 21 | Clearing text and RX/TX audio meters |
+| 22 | Setup tabs, audio amplification and themes |
+| 23 | Creating contacts and exporting ADIF for LoTW |
 
 **Start here:** for an HF chat trial, use ROBUST / RDM-600S with the radio's USB audio input and output selected. This is a suggested starting point, not a guaranteed link setting.
 
@@ -331,7 +333,7 @@ These are two separate functions. Both use the same selected modem transmit mode
 
 Enable **Beacon** in Radio Chat and select **Interval**, or configure it in Station Settings. The selectable range is **1-60 minutes**. A valid 4-, 6- or 8-character Maidenhead grid is required.
 
-Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.12`
+Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.13`
 
 It broadcasts to QST without changing your selected conversation or draft. **Beacon Now** requests a beacon while enabled and connected; a busy modem defers the request. The first automatic beacon follows one full interval after connection or configuration.
 
@@ -472,7 +474,7 @@ Use **Modem events** in Radio Chat when diagnosing startup, device routing or co
 
 ### Basis of this manual
 
-Application behavior was checked against QSO73 0.4.12 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
+Application behavior was checked against QSO73 0.4.13 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
 
 Engine source: https://github.com/RFnexus/modem73/tree/3a37c290a5330bd95f4f283feafc5ba5605bdc52
 
@@ -515,17 +517,19 @@ All rooms share one radio frequency and transmit queue. Private chat is addresse
 
 # 15. Windows portable testing build
 
-The Windows companion is **0.4.12 test 9**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 9 adds Heard queries, UTC/color chat, checked web links and the beacon countdown alongside PSK Reporter, PING and the activity dashboard; these changes still need Windows verification.
+The Windows companion is **0.4.13 test 10**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 10 adds Setup/Contact Log tabs, audio gain and themes, and fixes Stop Modem closing the client. Windows hardware verification remains pending.
 
 ### Extract and configure
 
 1. Extract the whole portable ZIP to a writable folder and run **QSO73.exe**. Keep **QSO73-Activity.exe**, **engine/** and **hamlib/** together. No installer, MSYS2, Python, WSL or separate Hamlib installation is needed by the operator.
-2. Enter your **Station callsign** and **Grid**. Click **Refresh audio devices**, then choose the radio USB device for both RX input and TX output. System-default audio devices are excluded.
+2. Open the **Setup** tab. Enter your **Station callsign** and **Grid**. Click **Refresh audio devices**, then choose the radio USB device for both RX input and TX output. System-default audio devices are excluded.
 3. Choose **robust / RDM-600S** for an initial HF trial. With **rigctl** PTT selected, choose your exact **Radio model**, **CAT COM port** and **baud** matching the radio's settings. Use Refresh models / COM ports after reconnecting. Other applications must release the CAT serial port.
 4. Click **Save settings**, then **Start Modem**. QSO73 starts bundled Hamlib 4.7.2, checks a radio frequency read, and starts modem73. Wait for Connected, Audio ready and CAT connected. Failed startup details appear in Modem Activity / rigctld.log.
 5. Use USB data mode and the radio's USB data modulation source. Start with low radio power and adjust TX audio using the radio's own ALC indication. Agree on frequency and operating settings with your test partner.
 
-**Stop Modem** releases PTT and closes the modem and Hamlib processes QSO73 started. CAT ports are internal. An occupied port reports an error instead of taking over another radio service. VOX is an alternative PTT choice when configured on the radio; it does not provide CAT frequency readback.
+Open **Chat** for messages, meters and frequency controls. **Contact Log** contains the contact creator and ADIF export. Start/Stop stays available above the tabs.
+
+**Stop Modem** keeps QSO73 open, releases PTT and closes the modem and Hamlib processes QSO73 started. CAT ports are internal. An occupied port reports an error instead of taking over another radio service. VOX is an alternative PTT choice when configured on the radio; it does not provide CAT frequency readback.
 
 ### Read activity and frequency
 
@@ -610,7 +614,7 @@ Protocol reference: https://www.pskreporter.info/pskdev.html
 
 # 18. Heard queries
 
-Use **Heard...** beside PING to ask stations for their reception history. Both ends need **QSO73 0.4.12 or later**. The modem engine itself does not need a new radio command or waveform. Queries and replies use ordinary radio packets and share airtime with chat.
+Use **Heard...** beside PING to ask stations for their reception history. Both ends need **QSO73 0.4.13 or later**. The modem engine itself does not need a new radio command or waveform. Queries and replies use ordinary radio packets and share airtime with chat.
 
 ### Ask everyone, or one station
 
@@ -688,7 +692,7 @@ Both clients show compact **RX audio** and **TX audio** meters while chatting. O
 
 | Meter | What it measures |
 | --- | --- |
-| RX audio | Digital samples arriving from the selected radio audio input |
+| RX audio | Digital samples from the selected radio input after software RX gain |
 | TX audio | Digital samples delivered to the selected audio output, after modem TX audio gain, including silence when idle |
 | Number | RMS level over approximately 100 milliseconds, in dBFS |
 | Thin marker | Peak sample level in that same measurement window |
@@ -699,3 +703,59 @@ Both clients show compact **RX audio** and **TX audio** meters while chatting. O
 Zero dBFS is digital full scale. Normal idle TX silence reads −100 dBFS and leaves the bar empty. Red indicates little digital headroom; it does not by itself identify clipping inside the radio. The TX meter is not an RF-power, SWR or ALC reading and does not prove that the selected audio device is the radio. Check the device selection and the radio's own meters during an agreed test.
 
 A changing RX meter confirms incoming audio activity, not a successfully decoded message. Use Decoding and the received transcript to check modem reception. An older independently installed engine may not provide these audio measurements; the clients show unavailable rather than estimating TX levels from gain or PTT state.
+
+
+<!-- page -->
+
+# 21. Setup, amplification and themes
+
+## Windows Setup tab
+
+Windows has three separate pages: **Chat**, **Setup** and **Contact Log**. Setup contains callsign/grid, radio input/output devices, modem mode, PTT method, bundled Hamlib model/COM/baud, macros, gain and theme choices. Configure and Save settings before Start Modem. Device and CAT changes require stopping the modem; the gain and theme controls remain available while it is running.
+
+Start/Stop is always at the top. Stop Modem shuts down QSO73's modem and Hamlib processes and releases PTT; QSO73 remains open. You can change settings and start it again in the same window. The radio-frequency controls occupy their own labeled group, separately from To / QST, in both clients.
+
+## Input and output gain
+
+In macOS Station Settings, use **RX gain**, **TX gain** and **Apply Gain**. In Windows Setup, enter the gain values in dB and click Apply Gain. Values are saved for the next startup and applied to a connected updated engine when idle. The engine rejects a gain update while receiving/transmitting; wait and apply again. Independently installed older engines may lack this feature: select the updated bundled engine to use gain controls.
+
+| Gain | Amplitude multiplier |
+| --- | --- |
+| −20 dB | 0.1x (attenuation) |
+| −6 dB | About 0.5x |
+| 0 dB | 1x (unity; initial default) |
+| +6 dB | About 2x |
+| +20 dB | 10x (maximum amplification) |
+
+RX gain acts before decoding and is reflected in the RX audio VU. TX gain multiplies the existing TX output percentage before playback and is reflected in the TX VU. Gain is software audio gain; it does not change the radio's RF-power setting or physical microphone/USB levels. Device-rate conversion, including a 44.1 kHz radio USB device, continues as before.
+
+Start at 0 dB. Increase gain only as needed and watch peak markers. Full-scale audio is limited to −1…+1; excess gain causes clipping and can impair decoding. RX gain also amplifies noise and does not improve signal-to-noise ratio. Check the radio's own ALC and use modest RF power during an agreed test.
+
+## Default and CP themes
+
+Choose **Default** or **CP** in Station Settings on macOS, or Setup on Windows. CP means Cyberpunk: a dark purple/navy interface with cyan and magenta accents. Default restores the normal platform presentation. Themes apply immediately and are saved between launches. They do not restart the modem or change radio settings. Message categories keep their blue/orange/green identities with colors suited to the background.
+
+<!-- page -->
+
+# 22. Contacts, ADIF and LoTW
+
+Open **Contact Log** in the macOS sidebar or Windows tab bar. Use **New Contact** to create a record of an actual completed contact. A beacon, PING, Heard reply or decoded packet alone is not automatically logged as a QSO.
+
+1. Review the contacted callsign and your station callsign. Radio-chat destinations can prefill a callsign; QST and channels do not. AX.25 SSIDs are removed from callsigns for logging. Portable callsigns with slash components are supported.
+2. Enter the actual radio frequency in MHz. A recent CAT read can prefill it, but verify it represents the contact. The amateur band is derived from the frequency; invalid/unrecognized frequencies prevent saving.
+3. Set the contact's UTC start and end. macOS date/time pickers use UTC; Windows uses YYYYMMDD and HHMMSS fields. End must not precede start, and a contact crossing midnight exports both dates correctly.
+4. Optionally enter the other station's grid, your grid, reports sent/received and notes. Reports are operator-entered rather than invented from SNR. Use printable ASCII for reports/notes; grids are validated. Confirm station identity/location against your TQSL configuration.
+5. Click **Save Contact**. On macOS, select a saved row to review/edit it; on Windows, select a row and click **Edit Selected**. Saving edits replaces that record. Save before leaving the creator; unsaved edits are not logged.
+6. Click **Export ADIF…** and save a .adi file containing all saved contacts. Export creates a file locally; it neither transmits on the radio nor submits credentials/contact data to an online service.
+
+## What the export contains
+
+Records use ADIF 3.1.6 and standard fields: CALL, STATION_CALLSIGN, OPERATOR, QSO_DATE, TIME_ON, QSO_DATE_OFF, TIME_OFF, FREQ (MHz), BAND and MODE. Optional fields are GRIDSQUARE, MY_GRIDSQUARE, RST_SENT, RST_RCVD and COMMENT. Mode is **PKT**, the standard packet-radio category, rather than an unsupported modem73 waveform name. Length-delimited field values and EOR markers produce a conventional ADIF .adi file.
+
+## Sign and submit using TQSL
+
+Open the exported .adi file in ARRL's TQSL and use **Sign a log and upload it automatically to LoTW**. TQSL requires your callsign certificate and correct station location. Review its validation messages and correct the contact record if needed, then export again. LoTW receives signed submissions; an unsigned ADIF export is not a direct LoTW upload and is not proof of acceptance.
+
+Contacts persist separately from chat: macOS saves them in its QSO73 preferences; Windows saves contacts.json beside QSO73.exe. Keep that file/settings.json when replacing a portable Windows folder. Personal contact data is excluded from distributed ZIPs. An unreadable saved log is preserved and editing is blocked, rather than silently overwriting it.
+
+Sources: https://www.adif.org/316/ADIF_316.htm and https://lotw.arrl.org/lotw-help/submitting-qsos/

@@ -61,3 +61,6 @@ clang++ -std=c++17 -O2 -Ivendor/modem73 Tests/AudioMeterTests.cpp -o build/audio
 build/audio-meter-tests
 swiftc -swift-version 5 -module-cache-path build/module-cache -framework SwiftUI Sources/AudioVU.swift Tests/AudioVUTests.swift -o build/audio-vu-tests
 build/audio-vu-tests
+
+swiftc -swift-version 5 -module-cache-path build/module-cache Sources/Protocol.swift Sources/ContactLog.swift Tests/ContactLogTests.swift -o build/contact-log-tests
+build/contact-log-tests

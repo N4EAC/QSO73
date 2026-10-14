@@ -9,6 +9,7 @@ def listener():
 
 control_listener, kiss_listener = listener(), listener()
 failures = []
+gain_requests = []
 
 def control_frame(obj):
     raw = json.dumps(obj, separators=(',', ':')).encode()
@@ -36,7 +37,12 @@ def serve_control():
                     if len(buffered) < n + 4: break
                     obj = json.loads(buffered[4:4+n]); buffered = buffered[4+n:]
                     if obj['cmd'] == 'get_config':
-                        reply = {'ok': True, 'callsign': 'TEST1', 'modulation': 'RDM-600', 'payload_size': 512, 'fragmentation_enabled': True, 'carrier_threshold_db': -30, 'slot_time_ms': 500, 'csma_quiet_ms': 0, 'csma_enabled': True, 'csma_sync_only': True, 'center_freq': 1500}
+                        reply = {'ok': True, 'rx_gain_db': gain_requests[-1]['rx_gain_db'] if gain_requests else 0, 'tx_gain_db': gain_requests[-1]['tx_gain_db'] if gain_requests else 0, 'callsign': 'TEST1', 'modulation': 'RDM-600', 'payload_size': 512, 'fragmentation_enabled': True, 'carrier_threshold_db': -30, 'slot_time_ms': 500, 'csma_quiet_ms': 0, 'csma_enabled': True, 'csma_sync_only': True, 'center_freq': 1500}
+                    elif obj['cmd'] == 'set_config':
+                        assert obj['rx_gain_db']==6 and obj['tx_gain_db']==-6
+                        gain_requests.append(obj)
+                        sock.sendall(control_frame({'event':'config_changed'}))
+                        reply={'ok':True}
                     elif obj['cmd'] == 'rx_frame_history':
                         reply = {'ok': True, 'frames': [{'seq': 1, 'time': 1700000000, 'size': 64, 'mode': 'RDM-600', 'callsign': 'TEST2', 'snr': -8, 'ber_pct': 0.6}]}
                     elif obj['cmd'] == 'get_status':

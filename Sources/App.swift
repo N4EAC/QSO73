@@ -3,6 +3,8 @@ import AppKit
 import UniformTypeIdentifiers
 
 @MainActor final class Workspace: ObservableObject {
+    let contacts = ContactLog()
+    @Published var theme = UserDefaults.standard.string(forKey:"qso73.theme.v1") ?? "Default" { didSet { UserDefaults.standard.set(theme,forKey:"qso73.theme.v1") } }
     @Published var settings = StationSettings()
     @Published var modemSettings = Modem73Settings()
     @Published var rigSettings = RigSettings()
@@ -119,13 +121,14 @@ import UniformTypeIdentifiers
 }
 
 enum Section: String, CaseIterable, Identifiable {
-    case chat = "Radio Chat", activity = "Modem Activity", settings = "Station Settings"
+    case chat = "Radio Chat", activity = "Modem Activity", settings = "Station Settings", logbook = "Contact Log"
     var id: Self { self }
     var icon: String {
         switch self {
         case .chat: return "antenna.radiowaves.left.and.right"
         case .activity: return "waveform.path"
         case .settings: return "gearshape"
+        case .logbook: return "book.closed"
         }
     }
 }
@@ -144,11 +147,11 @@ struct MainView: View {
                         }
                         Text("QSO73").font(.system(size: 30, weight: .bold, design: .rounded))
                     }
-                    Text("POWERED BY MODEM73").font(.caption).tracking(2).foregroundStyle(.secondary)
+                    Text("POWERED BY MODEM73").font(.caption).tracking(2).foregroundStyle(workspace.theme == "CP" ? Color.pink : Color.secondary)
                 }.padding(.horizontal).padding(.top, 20)
                 List(Section.allCases, selection: $selection) { section in
                     Label(section.rawValue, systemImage: section.icon).tag(section)
-                }.listStyle(.sidebar)
+                }.listStyle(.sidebar).scrollContentBackground(.hidden)
                 VStack(alignment: .leading, spacing: 6) {
                     Text("TX audio: " + modem.audioRoute).font(.caption).foregroundStyle(.secondary)
                         .lineLimit(2).truncationMode(.middle)
@@ -167,7 +170,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.12").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.13").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
@@ -192,9 +195,12 @@ struct MainView: View {
                         ScrollView { ModemActivityView(modem: modem).frame(maxWidth: .infinity, alignment: .leading) }
                     }
                 case .settings: SettingsView()
+                case .logbook: ContactLogView(log:workspace.contacts)
                 }
-            }.padding(24)
+            }.padding(24).background(workspace.theme == "CP" ? Color(red:0.035,green:0.035,blue:0.09) : Color(nsColor:.windowBackgroundColor))
         }
+        .preferredColorScheme(workspace.theme == "CP" ? .dark : nil)
+        .tint(workspace.theme == "CP" ? Color.cyan : Color.accentColor)
         .alert("QSO73", isPresented: Binding(get: { workspace.error != nil || modem.error != nil }, set: { if !$0 { workspace.error = nil; modem.error = nil } })) {
             Button("OK") { workspace.error = nil; modem.error = nil }
         } message: { Text(workspace.error ?? modem.error ?? "") }
@@ -259,6 +265,7 @@ struct ChatView: View {
                     .help("Green while modem73 is receiving a frame for decoding. Gray when idle. A green indication does not guarantee a successfully decoded message.")
 
                 Spacer()
+                GroupBox("Radio frequency · MHz") { HStack {
                 Label(modem.frequency + " · " + modem.radioMode, systemImage: "radio")
                 if workspace.modemSettings.catEnabled {
                     TextField("MHz", text: $workspace.frequencyInput).frame(width: 95).textFieldStyle(.roundedBorder)
@@ -266,6 +273,7 @@ struct ChatView: View {
                     Button("Set Frequency") { modem.tune(workspace.frequencyInput) }.disabled(!modem.attached || !modem.rigConnected || modem.channel != "idle")
                         .help("Changes the radio dial frequency. Available when the modem is idle and CAT is connected.")
                 }
+                } }
             }.font(.caption).foregroundStyle(.secondary)
             if !modem.frequencyFeedback.isEmpty { Text(modem.frequencyFeedback).font(.caption).foregroundStyle(.secondary) }
             ScrollViewReader { proxy in
@@ -277,7 +285,7 @@ struct ChatView: View {
                                 ChatLinkedText(text: entry.text, color: ChatPresentation.color(ChatPresentation.tone(entry), dark: colorScheme == .dark), safety: linkSafety).frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .foregroundStyle(ChatPresentation.color(ChatPresentation.tone(entry), dark: colorScheme == .dark))
-                            .padding(14).background(colorScheme == .dark ? Color(red: 0.13, green: 0.14, blue: 0.16) : Color(red: 0.965, green: 0.97, blue: 0.98), in: RoundedRectangle(cornerRadius: 10)).id(entry.id)
+                            .padding(14).background(workspace.theme == "CP" ? Color(red:0.07,green:0.055,blue:0.16) : (colorScheme == .dark ? Color(red: 0.13, green: 0.14, blue: 0.16) : Color(red: 0.965, green: 0.97, blue: 0.98)), in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius:10).stroke(workspace.theme == "CP" ? Color.pink.opacity(0.55) : Color.clear,lineWidth:1)).id(entry.id)
                         }
                     }.padding()
                 }.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
@@ -362,7 +370,13 @@ struct SettingsView: View {
     @State private var serialDevices = RigSettings.serialDevices
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Station Settings").font(.largeTitle.bold())
+            HStack { Text("Station Settings").font(.largeTitle.bold()); Spacer(); Picker("Theme",selection:$workspace.theme) { Text("Default").tag("Default"); Text("CP · Cyberpunk").tag("CP") }.frame(width:220) }
+            HStack {
+                Stepper("RX gain: \(Int(workspace.modemSettings.rxGain)) dB",value:$workspace.modemSettings.rxGain,in:-20...20)
+                Stepper("TX gain: \(Int(workspace.modemSettings.txGain)) dB",value:$workspace.modemSettings.txGain,in:-20...20)
+                Button("Apply Gain") { if workspace.save() { modem.applyAudioGain(rx:workspace.modemSettings.rxGain,tx:workspace.modemSettings.txGain) } }.disabled((modem.attached && modem.channel != "idle") || modem.connecting)
+            }.font(.caption)
+            Text("Gain: 0 dB = unity; positive values amplify up to +20 dB. Watch peak meters; excess gain clips. TX gain multiplies the TX output percentage.").font(.caption).foregroundStyle(.secondary)
             Form {
                 stationSection
                 engineSection

@@ -11,3 +11,12 @@ for name,identifier in [('rxVULabel','RXVU'),('txVULabel','TXVU'),('decodingLabe
 history=re.search(r'history\s*=\s*child\(MSFTEDIT_CLASS,\s*L"",\s*CHATLOG,\s*300,\s*(\d+)',source)
 assert history and int(history[1])>=226,'Transcript overlaps audio meter row on creation'
 print('PASS: RX/TX VUs and Decoding request owner drawing with unique IDs; initial transcript leaves meter row visible')
+
+assert 'SetConsoleCtrlHandler(ignoreChildShutdown, TRUE)' in source
+assert 'return event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT' in source
+assert 'SetConsoleCtrlHandler(nullptr, TRUE)' not in source
+assert 'TCN_SELCHANGE' in source and 'changePage(TabCtrl_GetCurSel(pages))' in source
+assert 'BS_GROUPBOX' in source and 'Radio frequency' in source
+extra=(Path(__file__).resolve().parents[1]/'src/ui_extras.hpp').read_text()
+assert 'GetWindowLongPtrW(button.first,GWL_STYLE)&~BS_TYPEMASK' in re.sub(r'\s+', '', extra)
+print('PASS: separate UI pages, frequency group, console-break protection and theme changes preserve control visibility')

@@ -556,6 +556,16 @@ struct RecentModemFrame: Identifiable {
             now.timeIntervalSince(frame.time) >= -5 && now.timeIntervalSince(frame.time) <= 600
         }?.snr
     }
+    var contactFrequency: String {
+        guard attached, rigConnected, let dial = reportedDial, Date().timeIntervalSince(reportedCATTime) <= 30 else { return "" }
+        return String(format:"%.6f",locale:Locale(identifier:"en_US_POSIX"),dial / 1_000_000)
+    }
+    func applyAudioGain(rx: Double, tx: Double) {
+        guard attached else { return }
+        guard channel == "idle", rx.isFinite, tx.isFinite, (-20...20).contains(rx), (-20...20).contains(tx), configDetails["rx_gain_db"] != nil else { error = "Gain changes require an idle updated QSO73 engine."; return }
+        error = nil
+        request(["cmd":"set_config", "rx_gain_db":rx, "tx_gain_db":tx], purpose:"audioGain")
+    }
     func clearMessages(in conversation: String) { entries.removeAll { $0.conversation == conversation } }
 
     func send(_ message: String, to destination: String, automatic: Bool = false) {

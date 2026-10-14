@@ -55,7 +55,7 @@ for number,section in enumerate(sections):
             elif number==9 and count==3: widths=[130,292,94]
             elif number==10 and count==2: widths=[147,369]
             table=Table([[para(cell,'TableHeadManual' if r==0 else 'TableManual') for cell in row] for r,row in enumerate(rows)],colWidths=widths,repeatRows=1,hAlign='LEFT')
-            table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),navy),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.HexColor('#EDF5F6'),colors.white]),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),8),('RIGHTPADDING',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),2 if number==0 else 4),('BOTTOMPADDING',(0,0),(-1,-1),2 if number==0 else 4),('LINEBELOW',(0,-1),(-1,-1),0.5,colors.HexColor('#C8DADF'))]))
+            table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),navy),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.HexColor('#EDF5F6'),colors.white]),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),8),('RIGHTPADDING',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),1.5 if number==0 else 4),('BOTTOMPADDING',(0,0),(-1,-1),1.5 if number==0 else 4),('LINEBELOW',(0,-1),(-1,-1),0.5,colors.HexColor('#C8DADF'))]))
             story += [table,Spacer(1,9)]
             continue
         if line.startswith('# '):
@@ -64,7 +64,7 @@ for number,section in enumerate(sections):
         elif line.startswith('### '): story.append(para(line[4:],'SubManual'))
         elif re.match(r'^\d+\. ',line):
             item=re.match(r'^(\d+)\. (.*)',line)
-            story.append(Paragraph(inline(item[2]),ParagraphStyle(name='step',parent=styles['BodyManual'],leftIndent=18,firstLineIndent=0,bulletIndent=0),bulletText=item[1]+'.'))
+            story.append(Paragraph(inline(item[2]),ParagraphStyle(name='step',parent=styles['BodyManual'],fontSize=9.5 if number==15 else 10,leading=12 if number==15 else 13.4,spaceAfter=5 if number==15 else 7,leftIndent=18,firstLineIndent=0,bulletIndent=0),bulletText=item[1]+'.'))
         elif line.startswith('- '):
             story.append(Paragraph(inline(line[2:]),ParagraphStyle(name='bullet',parent=styles['BodyManual'],leftIndent=13,bulletIndent=0),bulletText='-'))
         else:
@@ -81,12 +81,12 @@ def decoration(canvas,doc):
     canvas.setFont('Helvetica-Bold',8);canvas.setFillColor(navy)
     canvas.drawString(48,h-28,'QSO73  /  USER MANUAL')
     canvas.setFont('Helvetica',8);canvas.setFillColor(colors.HexColor('#627581'))
-    canvas.drawRightString(w-48,h-28,'Version 0.4.12')
+    canvas.drawRightString(w-48,h-28,'Version 0.4.13')
     canvas.setStrokeColor(colors.HexColor('#D4E1E5'));canvas.setLineWidth(.5);canvas.line(48,40,w-48,40)
     canvas.drawString(48,27,'October 14, 2026  |  macOS / Windows')
     canvas.drawRightString(w-48,27,str(doc.page))
     canvas.restoreState()
 
-doc=SimpleDocTemplate(str(output),pagesize=letter,leftMargin=48,rightMargin=48,topMargin=56,bottomMargin=53,title='QSO73 User Manual - Version 0.4.12',author='QSO73',subject='Radio setup, channels, direct chat and modem mode selection')
+doc=SimpleDocTemplate(str(output),pagesize=letter,leftMargin=48,rightMargin=48,topMargin=56,bottomMargin=53,title='QSO73 User Manual - Version 0.4.13',author='QSO73',subject='Radio setup, channels, direct chat and modem mode selection')
 doc.build(story,onFirstPage=decoration,onLaterPages=decoration)
 print(output)

@@ -21,10 +21,10 @@ public:
         return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     }
     void reset() { energy_ = 0; peak_ = 0; frames_ = 0; measured_.store(0); }
-    void observe(const float* samples, uint32_t frames, unsigned rate) {
+    void observe(const float* samples, uint32_t frames, unsigned rate, float gain = 1) {
         if (!samples || !rate) return;
         for (uint32_t i = 0; i < frames; ++i) {
-            double value = std::isfinite(samples[i]) ? samples[i] : 0;
+            double value = std::isfinite(samples[i]) ? std::clamp(samples[i] * gain, -1.0f, 1.0f) : 0;
             energy_ += value * value;
             peak_ = std::max(peak_, float(std::abs(value)));
         }

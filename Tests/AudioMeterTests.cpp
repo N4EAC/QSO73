@@ -26,6 +26,12 @@ int main() {
     samples.assign(4800, std::numeric_limits<float>::quiet_NaN()); tx.observe(samples.data(),4800,48000);
     assert(tx.snapshot().rms == -100);
     tx.reset(); assert(!tx.snapshot().available);
+    samples=original; rx.observe(samples.data(),4800,48000,2);
+    assert(std::abs(rx.snapshot().rms + 3.0103) < 0.001 && rx.snapshot().peak==0);
+    rx.observe(samples.data(),4800,48000,0.1f);
+    assert(std::abs(rx.snapshot().rms + 29.0309) < 0.001);
+    rx.observe(samples.data(),4800,48000,10);
+    assert(rx.snapshot().peak==0 && std::isfinite(rx.snapshot().rms));
     samples=original; rx.observe(samples.data(),4800,48000); assert(samples==original);
     std::cout << "PASS: 100 ms PCM RMS/peak, post-gain levels, silence, full scale, invalid samples, stale/reset and unmodified waveform\n";
 }

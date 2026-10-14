@@ -20,6 +20,8 @@ import Foundation
         guard modem.rxAudioLevel == -32.5 else { fatalError("RX audio level did not reach the client") }
         guard modem.audioLevels.reading(tx: false, connected: true)?.rms == -32.5,
               modem.audioLevels.reading(tx: true, connected: true)?.peak == -2 else { fatalError("Live audio events did not reach client") }
+        modem.applyAudioGain(rx:6,tx:-6)
+        try await awaitCondition("gain control readback") { modem.configDetails["rx_gain_db"] == "6" && modem.configDetails["tx_gain_db"] == "-6" }
         try await awaitCondition("modem activity and frame history") { !modem.activity.isEmpty && modem.recentFrames.count == 1 }
         guard modem.txQueue == 3, modem.rxErrors == 4, modem.occupancy == 12, modem.clients == 1,
               modem.recentFrames.first?.size == 64, modem.recentFrames.first?.mode == "RDM-600",

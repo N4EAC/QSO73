@@ -35,6 +35,10 @@ struct Modem73Settings: Codable, Equatable {
     var mfskMode = "MFSK-16"
     var modulation = "QPSK"
     var rate = "1/2"
+    var rxGainDB: Double? = nil
+    var txGainDB: Double? = nil
+    var rxGain: Double { get { rxGainDB ?? 0 } set { rxGainDB = newValue } }
+    var txGain: Double { get { txGainDB ?? 0 } set { txGainDB = newValue } }
     var txLevel = 25
     var ptt = "rigctl"
     var serialPort = "/dev/cu.usbserial"
@@ -42,6 +46,7 @@ struct Modem73Settings: Codable, Equatable {
     var catEnabled = false
     func validate(station: StationSettings) throws {
         try station.validate()
+        guard rxGain.isFinite, txGain.isFinite, (-20...20).contains(rxGain), (-20...20).contains(txGain) else { throw RadioError.invalid("Audio gain must be −20 to +20 dB.") }
         if !embedded {
             guard (1...65535).contains(kissPort), (1...65535).contains(controlPort), kissPort != controlPort,
                   !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw RadioError.invalid("Enter two distinct TCP ports from 1 to 65535 and a modem host.") }
@@ -63,6 +68,7 @@ struct Modem73Settings: Codable, Equatable {
                  "--port", String(connectionKISSPort), "--control-port", String(connectionControlPort), "--callsign", String(station.callsign.uppercased().split(separator: "-")[0]),
                  "--input-device", inputDevice, "--output-device", outputDevice, "--tx-level", String(txLevel),
                  "--frag", "--csma-mode", "sync", "--csma-band", "hf", "--modem", family]
+        if rxGain != 0 || txGain != 0 { a += ["--rx-gain-db", String(rxGain), "--tx-gain-db", String(txGain)] }
         if family == "robust" { a += ["--robust-mode", robustMode] }
         else if family == "mfsk" { a += ["--mfsk-mode", mfskMode] }
         else { a += ["--modulation", modulation, "--rate", rate, "--normal"] }

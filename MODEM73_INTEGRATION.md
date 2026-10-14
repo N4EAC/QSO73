@@ -61,3 +61,12 @@ The bundled engine measures RX input and TX output samples after gain: approxima
 Clear removes only the currently displayed conversation's messages while preserving rooms, heard history, deduplication and settings; Clear Draft empties only its editor. Clearing cancels pending link opening.
 
 Control events use `event=audio_levels`, `rx_audio_available` / `tx_audio_available`, and `rx_audio_rms_dbfs`, `rx_audio_peak_dbfs`, `tx_audio_rms_dbfs`, `tx_audio_peak_dbfs`. The same fields are included in `get_status`; unavailable streams omit their numeric values. Measurement snapshots expire after 500 ms without callbacks, with a one-second client freshness limit. The 48 kHz engine callback samples are measured after the existing hardware-rate conversion; FT-710 44.1 kHz device conversion remains intact.
+
+
+## 0.4.13 setup, gain, themes and contacts
+
+Windows test 10 has separate Chat, Setup and Contact Log tabs. The radio frequency has its own labeled group. Stop Modem keeps the GUI open: a custom console handler protects the client against both CTRL_C and CTRL_BREAK while signaling its own child processes. Handler registration is checked before sending a console signal.
+
+Both clients provide saved Default/CP (Cyberpunk) themes and -20…+20 dB RX/TX software gain. RX is scaled before decoding; TX gain multiplies TX audio percentage. Samples are limited at digital full scale and meters measure the adjusted streams. Gain changes apply only when idle and are saved for startup. Updated bundled engines expose rx_gain_db / tx_gain_db in get_config and validate them in set_config; CLI options are --rx-gain-db / --tx-gain-db. Older Mac profiles retain their settings with zero gain defaults.
+
+Both clients have manual contact creation/editing and ADIF 3.1.6 export using PKT, UTC date/time on/off, frequency/band, station/operator callsigns and optional grid/report/comment fields. ADIF is for TQSL signing and LoTW submission, not direct unsigned upload. Portable contacts.json is user data and is never included in release ZIPs.
