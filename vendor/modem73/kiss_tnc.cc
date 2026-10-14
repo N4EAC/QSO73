@@ -1228,6 +1228,9 @@ int main(int argc, char** argv) {
             ControlPort::TNCInterface ctrl_iface;
 
             ctrl_iface.is_decoding = [&tnc]() { return tnc.is_decoding(); };
+            ctrl_iface.get_audio_levels = [&tnc]() {
+                auto object = cJSON_CreateObject(); tnc.add_audio_levels(object); return object;
+            };
             ctrl_iface.get_status = [&tnc, &modem_airtime_s, &modem_mtu_bytes]() -> cJSON* {
                 cJSON* j = cJSON_CreateObject();
                 auto stats = tnc.get_decoder_stats();
@@ -1262,6 +1265,7 @@ int main(int argc, char** argv) {
                 cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
                 cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
                 cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
+                tnc.add_audio_levels(j);
                 cJSON_AddBoolToObject(j, "decoding", tnc.is_decoding());
                 cJSON_AddNumberToObject(j, "rx_audio_level_db", tnc.get_audio_level());
                 cJSON_AddNumberToObject(j, "population", tnc.channel_population());

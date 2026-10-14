@@ -2723,6 +2723,21 @@ public:
     int csma_window_ms() const { return telemetry_window_ms_.load(); }
     int csma_quiet_ms() const { return telemetry_quiet_ms_.load(); }
     bool dcd_state() const { return telemetry_dcd_.load(); }
+    void add_audio_levels(cJSON* object) const {
+        auto rx = audio_ ? audio_->rx_meter() : AudioMeterSnapshot{false, -100, -100};
+        auto tx = audio_ ? audio_->tx_meter() : AudioMeterSnapshot{false, -100, -100};
+        cJSON_AddBoolToObject(object, "rx_audio_available", rx.available);
+        cJSON_AddBoolToObject(object, "tx_audio_available", tx.available);
+        if (rx.available) {
+            cJSON_AddNumberToObject(object, "rx_audio_rms_dbfs", rx.rms);
+            cJSON_AddNumberToObject(object, "rx_audio_peak_dbfs", rx.peak);
+        }
+        if (tx.available) {
+            cJSON_AddNumberToObject(object, "tx_audio_rms_dbfs", tx.rms);
+            cJSON_AddNumberToObject(object, "tx_audio_peak_dbfs", tx.peak);
+        }
+    }
+
     float get_audio_level() {
         if (!audio_ || !audio_->capture_alive()) return -100.0f;
         return audio_->instant_level_db(100);
@@ -3988,6 +4003,9 @@ int main(int argc, char** argv) {
             ControlPort::TNCInterface ctrl_iface;
 
             ctrl_iface.is_decoding = [&tnc]() { return tnc.is_decoding(); };
+            ctrl_iface.get_audio_levels = [&tnc]() {
+                auto object = cJSON_CreateObject(); tnc.add_audio_levels(object); return object;
+            };
             ctrl_iface.get_status = [&tnc, &modem_airtime_s, &modem_mtu_bytes]() -> cJSON* {
                 cJSON* j = cJSON_CreateObject();
                 auto stats = tnc.get_decoder_stats();
@@ -4026,6 +4044,7 @@ int main(int argc, char** argv) {
                 cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
                 cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
                 cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
+                tnc.add_audio_levels(j);
                 cJSON_AddBoolToObject(j, "decoding", tnc.is_decoding());
                 auto tx_history=cJSON_AddArrayToObject(j,"tx_history");
                 auto tick=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();

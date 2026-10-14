@@ -11,6 +11,7 @@
 #include <objbase.h>
 #include <shellapi.h>
 // clang-format on
+#include "audio_vu.hpp"
 #include "chat_presentation.hpp"
 #include "dashboard.hpp"
 #include "heard_query.hpp"
@@ -31,7 +32,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.11 Windows test 7";
+constexpr const wchar_t *VERSION = L"0.4.12 Windows test 8";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -62,7 +63,9 @@ enum ControlID {
   PSKREPORTER,
   HEARDQUERY,
   AUTOHEARD,
-  CHATLOG
+  CHATLOG,
+  CLEARMESSAGES,
+  CLEARDRAFT
 };
 enum SettingID {
   CALL = 201,
@@ -83,6 +86,8 @@ enum SettingID {
 };
 HWND win, history, composer, statusLabel, topicLabel, frequencyLabel,
     decodingLabel, reportingLabel, beaconCountdownLabel, linkSafetyLabel;
+HWND rxVULabel, txVULabel;
+AudioLevels audioLevels;
 LinkCheckWorker linkChecks;
 uint64_t linkRequestId = 0;
 std::string linkCurrentURL;
@@ -844,6 +849,7 @@ void start() {
   pskSince = 0;
   reportedDial = 0;
   reportedRadioMode.clear();
+  audioLevels = AudioLevels{};
   audioReady = false;
   decodingActive = false;
   decoderStateTime = 0;
@@ -901,6 +907,7 @@ void stop() {
   pskSince = 0;
   reportedDial = 0;
   reportedRadioMode.clear();
+  audioLevels = AudioLevels{};
   audioReady = false;
   decodingActive = false;
   decoderStateTime = 0;
@@ -1291,7 +1298,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.11-win-test7",
+                 " QSO73 v0.4.12-win-test8",
              true});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
@@ -1317,7 +1324,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 7 - ") +
+  std::string s = std::string("QSO73 Windows test 8 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1483,6 +1490,7 @@ void pollUI() {
         rawStatus = e.data;
         statusTime = now();
         audioReady = j.yes("audio_connected");
+        if (cJSON_GetObjectItemCaseSensitive(j.p, "rx_audio_available")) audioLevels.update(j, now());
         rigReady = j.yes("rigctl_connected");
         channelState = j.str("channel_state");
         activityHistory.push_back(channelState);
@@ -1530,6 +1538,10 @@ void pollUI() {
         frequencyTime = snapshot.num("sample_time");
       } else if (e.kind == "event") {
         Json event(e.data);
+        if (event.str("event") == "audio_levels") {
+          audioLevels.update(event, now());
+          continue;
+        }
         if (event.str("event") == "decoder_state") {
           decodingActive = event.yes("decoding");
           decoderStateTime = now();
@@ -1639,7 +1651,7 @@ void pollUI() {
       pskBatch = pskReports.reports;
       try {
         auto bytes = PSKReportQueue::encode(
-            settings.call, settings.grid, "QSO73 0.4.11 / modem73 2.4.2",
+            settings.call, settings.grid, "QSO73 0.4.12 / modem73 2.4.2",
             pskBatch, pskSequence, pskDomain, uint32_t(epoch()));
         pskSending = true;
         pskStatus = "PSK: submitting via Internet";
@@ -1655,6 +1667,10 @@ void pollUI() {
       }
     }
   }
+  InvalidateRect(rxVULabel, nullptr, FALSE);
+  InvalidateRect(txVULabel, nullptr, FALSE);
+  EnableWindow(controls[CLEARDRAFT], !text(composer).empty());
+  EnableWindow(controls[CLEARMESSAGES], std::any_of(rooms.entries.begin(), rooms.entries.end(), [](const Entry &entry) { return entry.room == rooms.selected; }));
   put(reportingLabel, pskStatus);
   put(beaconCountdownLabel,
       beaconCountdown(beaconOn, beaconPending,
@@ -1673,7 +1689,8 @@ void pollUI() {
     notify("Engine exited. See Modem Activity / engine.log.");
   }
   if (!connected) {
-    audioReady = false;
+    audioLevels = AudioLevels{};
+  audioReady = false;
     statusTime = 0;
   }
   if (announceOn && rooms.hasParticipant(announceRoom, now())) {
@@ -1722,9 +1739,12 @@ void modes() {
 }
 void layout(int w, int h) {
   int left = 300, right = w - left - 15;
-  MoveWindow(history, left, 188, right, h - 365, TRUE);
+  MoveWindow(history, left, 226, right, h - 403, TRUE);
+  MoveWindow(rxVULabel, left, 184, (right - 16) / 2, 32, TRUE);
+  MoveWindow(txVULabel, left + (right + 16) / 2, 184, (right - 16) / 2, 32, TRUE);
   MoveWindow(composer, left, h - 167, right - 115, 65, TRUE);
-  MoveWindow(controls[SEND], w - 120, h - 167, 105, 65, TRUE);
+  MoveWindow(controls[SEND], w - 120, h - 167, 105, 35, TRUE);
+  MoveWindow(controls[CLEARDRAFT], w - 120, h - 128, 105, 26, TRUE);
   MoveWindow(statusLabel, left, h - 42, right, 32, TRUE);
   for (int id : {CQ, SNR, CLOSEQSO, CUSTOM})
     MoveWindow(controls[id], left + (id - CQ) * 112, h - 95, 105, 27, TRUE);
@@ -1734,7 +1754,8 @@ void layout(int w, int h) {
              TRUE);
   MoveWindow(controls[NEWROOM], w - 390, 14, 200, 25, TRUE);
   MoveWindow(controls[JOIN], w - 185, 14, 170, 27, TRUE);
-  MoveWindow(topicLabel, left, 49, right - 240, 22, TRUE);
+  MoveWindow(topicLabel, left, 49, right - 325, 22, TRUE);
+  MoveWindow(controls[CLEARMESSAGES], w - 320, 45, 80, 27, TRUE);
   MoveWindow(linkSafetyLabel, 852, 155, std::max(80, w - 867), 24, TRUE);
   MoveWindow(beaconCountdownLabel, 838, 123, std::max(100, w - 853), 24, TRUE);
   MoveWindow(decodingLabel, w - 95, 86, 80, 22, TRUE);
@@ -1745,7 +1766,7 @@ void layout(int w, int h) {
 }
 void makeUI() {
   font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-  label(L"QSO73 Windows test 7", 15, 14, 275);
+  label(L"QSO73 Windows test 8", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104, 75);
@@ -1788,6 +1809,7 @@ void makeUI() {
                (LPARAM)L"#channel or callsign");
   button(JOIN, L"Open / Join", 825, 14, 165);
   topicLabel = child(L"STATIC", L"", 0, 300, 49, 450, 22);
+  button(CLEARMESSAGES, L"Clear", 680, 45, 80);
   button(TOPIC, L"Topic...", 765, 45, 70);
   button(USERS, L"Users...", 840, 45, 70);
   button(LEAVE, L"Leave", 915, 45, 70);
@@ -1819,6 +1841,8 @@ void makeUI() {
   SendMessageW(controls[AUTOHEARD], BM_SETCHECK,
                settings.autoHeard ? BST_CHECKED : BST_UNCHECKED, 0);
   linkSafetyLabel = child(L"STATIC", L"", 0, 852, 155, 170, 24);
+  rxVULabel = child(L"STATIC", L"", SS_OWNERDRAW, 300, 184, 330, 32);
+  txVULabel = child(L"STATIC", L"", SS_OWNERDRAW, 650, 184, 330, 32);
   history = child(MSFTEDIT_CLASS, L"", CHATLOG, 300, 188, 680, 350,
                   ES_MULTILINE | ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL);
   SendMessageW(history, EM_SETEVENTMASK, 0,
@@ -1829,6 +1853,7 @@ void makeUI() {
                    ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP);
   SendMessageW(composer, EM_SETLIMITTEXT, 200, 0);
   button(SEND, L"Send Packet", 870, 550, 105);
+  button(CLEARDRAFT, L"Clear Draft", 870, 590, 105);
   button(CQ, L"F1 - CQ", 300, 627, 105);
   button(SNR, L"F2 - SNR", 412, 627, 105);
   button(CLOSEQSO, L"F3 - 73", 524, 627, 105);
@@ -1841,6 +1866,41 @@ void makeUI() {
   SetTimer(win, 2, 100, nullptr);
 }
 LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+  if (m == WM_DRAWITEM) {
+    auto draw = reinterpret_cast<DRAWITEMSTRUCT *>(l);
+    if (draw->hwndItem == rxVULabel || draw->hwndItem == txVULabel) {
+      bool tx = draw->hwndItem == txVULabel;
+      auto reading = audioLevels.reading(tx, connected && audioReady, now());
+      FillRect(draw->hDC, &draw->rcItem, GetSysColorBrush(COLOR_BTNFACE));
+      SetBkMode(draw->hDC, TRANSPARENT); SetTextColor(draw->hDC, GetSysColor(COLOR_BTNTEXT));
+      SelectObject(draw->hDC, font);
+      std::string label = tx ? "TX audio" : "RX audio";
+      label += reading ? "  " + std::to_string(int(std::round(reading->rms))) + " dBFS" : "  --";
+      auto text = wide(label); RECT title = draw->rcItem; title.bottom = title.top + 17;
+      DrawTextW(draw->hDC, text.c_str(), -1, &title, DT_LEFT | DT_SINGLELINE);
+      RECT bar = draw->rcItem; bar.top += 20; bar.bottom = bar.top + 8;
+      FillRect(draw->hDC, &bar, GetSysColorBrush(COLOR_3DSHADOW));
+      int width = bar.right - bar.left;
+      if (reading) {
+        int filled = int(width * AudioVUReading::fraction(reading->rms));
+        int edges[] = {0, int(width * 0.8), int(width * 0.95), width};
+        COLORREF colors[] = {RGB(0,135,65), RGB(220,165,0), RGB(215,45,45)};
+        for (int segment = 0; segment < 3; ++segment) {
+          int right = std::min(filled, edges[segment+1]);
+          if (right > edges[segment]) {
+            auto brush = CreateSolidBrush(colors[segment]);
+            RECT slice{bar.left+edges[segment],bar.top,bar.left+right,bar.bottom};
+            FillRect(draw->hDC,&slice,brush); DeleteObject(brush);
+          }
+        }
+        int peak = std::clamp(int(width * AudioVUReading::fraction(reading->peak)), 0, std::max(0,width-2));
+        RECT marker{bar.left+peak,bar.top-1,bar.left+peak+2,bar.bottom+1};
+        auto brush = CreateSolidBrush(reading->peak >= -3 ? RGB(215,45,45) : GetSysColor(COLOR_BTNTEXT));
+        FillRect(draw->hDC,&marker,brush); DeleteObject(brush);
+      }
+      return TRUE;
+    }
+  }
   if (m == WM_DRAWITEM &&
       reinterpret_cast<DRAWITEMSTRUCT *>(l)->hwndItem == decodingLabel) {
     auto item = reinterpret_cast<DRAWITEMSTRUCT *>(l);
@@ -2004,6 +2064,14 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (!settings.autoPing)
           ping.pending.clear();
         saveSettings();
+        break;
+      case CLEARMESSAGES:
+        ++linkRequestId; linkChecks.cancel(); put(linkSafetyLabel, "");
+        rooms.entries.erase(std::remove_if(rooms.entries.begin(), rooms.entries.end(), [](const Entry &entry) { return entry.room == rooms.selected; }), rooms.entries.end());
+        showHistory();
+        break;
+      case CLEARDRAFT:
+        put(composer, ""); drafts[rooms.selected].clear();
         break;
       case AUTOHEARD:
         settings.autoHeard =

@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 mkdir -p build/module-cache
 swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network Sources/Protocol.swift Sources/RigController.swift Sources/SettingsProfile.swift Sources/RadioMacros.swift Sources/Beacon.swift Tests/Modem73ProtocolTests.swift -o build/modem73-protocol-tests
 build/modem73-protocol-tests
-swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine -framework AVFoundation Sources/Protocol.swift Sources/EngineInstallation.swift Sources/EmbeddedEngine.swift Sources/RigController.swift Sources/Modem.swift Sources/HeardQuery.swift Sources/PSKReporter.swift Sources/Ping.swift Sources/Beacon.swift Sources/ChatRooms.swift Sources/ChannelAnnouncements.swift Sources/CallsignList.swift Sources/RigTelemetry.swift Tests/Modem73NetworkTests.swift -o build/modem73-network-tests
+swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine -framework AVFoundation Sources/Protocol.swift Sources/EngineInstallation.swift Sources/EmbeddedEngine.swift Sources/RigController.swift Sources/Modem.swift Sources/AudioVU.swift Sources/HeardQuery.swift Sources/PSKReporter.swift Sources/Ping.swift Sources/Beacon.swift Sources/ChatRooms.swift Sources/ChannelAnnouncements.swift Sources/CallsignList.swift Sources/RigTelemetry.swift Tests/Modem73NetworkTests.swift -o build/modem73-network-tests
 python3 Tests/modem73_simulator.py
 clang++ -std=c++17 -O2 -I vendor/modem73 -I vendor/modem73/deps/aicodix/dsp -I vendor/modem73/deps/aicodix/code -I vendor/modem73/deps/aicodix/modem Tests/dsp_roundtrip.cc -o build/dsp-roundtrip
 build/dsp-roundtrip > build/dsp-test.log 2>&1
@@ -54,5 +54,10 @@ swiftc -swift-version 5 -module-cache-path build/module-cache -framework SwiftUI
 build/chat-presentation-tests
 swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework AppKit -framework Combine Sources/Protocol.swift Sources/LinkSafety.swift Tests/LinkSafetyTests.swift -o build/link-safety-tests
 build/link-safety-tests /tmp/qso73-link-dns-mac.bin
-swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine -framework AVFoundation Sources/Protocol.swift Sources/EngineInstallation.swift Sources/EmbeddedEngine.swift Sources/RigController.swift Sources/Modem.swift Sources/HeardQuery.swift Sources/PSKReporter.swift Sources/Ping.swift Sources/Beacon.swift Sources/ChatRooms.swift Sources/ChannelAnnouncements.swift Sources/CallsignList.swift Sources/RigTelemetry.swift Tests/HeardNetworkTests.swift -o build/heard-network-tests
+swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine -framework AVFoundation Sources/Protocol.swift Sources/EngineInstallation.swift Sources/EmbeddedEngine.swift Sources/RigController.swift Sources/Modem.swift Sources/AudioVU.swift Sources/HeardQuery.swift Sources/PSKReporter.swift Sources/Ping.swift Sources/Beacon.swift Sources/ChatRooms.swift Sources/ChannelAnnouncements.swift Sources/CallsignList.swift Sources/RigTelemetry.swift Tests/HeardNetworkTests.swift -o build/heard-network-tests
 python3 Tests/heard_simulator.py
+
+clang++ -std=c++17 -O2 -Ivendor/modem73 Tests/AudioMeterTests.cpp -o build/audio-meter-tests
+build/audio-meter-tests
+swiftc -swift-version 5 -module-cache-path build/module-cache -framework SwiftUI Sources/AudioVU.swift Tests/AudioVUTests.swift -o build/audio-vu-tests
+build/audio-vu-tests

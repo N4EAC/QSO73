@@ -25,6 +25,7 @@ import AppKit
         modem.attached = true; modem.audioConnected = true; modem.rigConnected = true; modem.status = "modem73 ready"
         modem.audioRoute = "USB Audio Device (device 44100 Hz, modem 48000 Hz; CoreAudio route verified)"
         modem.rxAudioLevel = -38; modem.activeMode = "RDM-600S"; modem.frequency = "7.105000 MHz"; modem.radioMode = "PKTUSB"
+        modem.audioLevels.update(["rx_audio_available":true, "rx_audio_rms_dbfs":-24.0, "rx_audio_peak_dbfs":-12.0, "tx_audio_available":true, "tx_audio_rms_dbfs":-15.0, "tx_audio_peak_dbfs":-2.0])
         capture("connected")
         modem.decoding = true
         capture("decoding")
@@ -45,6 +46,12 @@ import AppKit
                 try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/qso73-chat-\(dark ? "dark" : "light").png"))
             }
         }
+        let saved = modem.entries
+        modem.entries.append(ChatEntry(direction: "TEST2", text: "Keep other conversation", conversation: "TEST2"))
+        modem.clearMessages(in: "radio")
+        guard modem.entries.count == 1, modem.entries[0].conversation == "TEST2" else { fatalError("Clear affected another conversation") }
+        modem.entries = saved
+        print("PASS: Clear preserves other conversations")
         modem.audioRoute = String(repeating: "Long named radio device / route description ", count: 8)
         capture("long-route")
         let settingsHost = NSHostingView(rootView: SettingsView().environmentObject(workspace).environmentObject(modem).environmentObject(updates).frame(width: 760, height: 760))

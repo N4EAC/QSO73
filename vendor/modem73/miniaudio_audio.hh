@@ -1,4 +1,5 @@
 #pragma once
+#include "audio_meter.hh"
 
 #define MA_NO_DECODING
 #define MA_NO_ENCODING
@@ -281,6 +282,9 @@ public:
 
 
 
+    AudioMeterSnapshot rx_meter() const { return rx_meter_.snapshot(); }
+    AudioMeterSnapshot tx_meter() const { return tx_meter_.snapshot(); }
+
     bool capture_alive() {
         return capture_open_.load(std::memory_order_acquire) &&
                block_seq_.load(std::memory_order_acquire) > 0 &&
@@ -484,6 +488,7 @@ private:
         if (was_open) {
             ma_device_uninit(&playback_device_);
         }
+        tx_meter_.reset();
         playback_read_pos_ = 0;
         playback_write_pos_ = 0;
     }
@@ -494,6 +499,7 @@ private:
         if (was_open) {
             ma_device_uninit(&capture_device_);
         }
+        rx_meter_.reset();
         capture_read_pos_ = 0;
         capture_write_pos_ = 0;
     }
@@ -516,6 +522,7 @@ private:
             out[i] = 0.0f;
         }
 
+        self->tx_meter_.observe(out, frame_count, self->sample_rate_);
         self->playback_read_pos_ = (read_pos + to_read) % RING_BUFFER_SIZE;
     }
 
@@ -535,6 +542,7 @@ private:
             self->capture_buffer_[(write_pos + i) % CAPTURE_RING_SIZE] = in[i];
         }
 
+        self->rx_meter_.observe(in, frame_count, self->sample_rate_);
         self->capture_write_pos_ = (write_pos + to_write) % CAPTURE_RING_SIZE;
 
         float sum_sq = 0.0f;
@@ -560,6 +568,7 @@ private:
             std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 
+    AudioMeter rx_meter_, tx_meter_;
     std::string capture_device_id_;
     std::string playback_device_id_;
     int sample_rate_;

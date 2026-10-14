@@ -20,6 +20,7 @@ int main() {
     std::atomic<bool> decoding{false};
     ControlPort::TNCInterface iface;
     iface.is_decoding=[&] {return decoding.load();};
+    iface.get_audio_levels=[] { auto j=cJSON_CreateObject(); cJSON_AddBoolToObject(j,"rx_audio_available",true); cJSON_AddNumberToObject(j,"rx_audio_rms_dbfs",-32.5); cJSON_AddNumberToObject(j,"rx_audio_peak_dbfs",-18); cJSON_AddBoolToObject(j,"tx_audio_available",false); return j; };
     iface.get_status=[&] { auto j=cJSON_CreateObject(); cJSON_AddBoolToObject(j,"ok",true); cJSON_AddBoolToObject(j,"decoding",decoding); return j; };
     ControlPort ctrl(port,"127.0.0.1",iface); assert(ctrl.start());
     fd=socket(AF_INET,SOCK_STREAM,0);
@@ -35,6 +36,18 @@ int main() {
         assert(false);
     };
     expect(false); decoding=true; expect(true);
+    bool audioReceived=false;
+    for(int i=0;i<20&&!audioReceived;++i) {
+        auto s=read_frame(fd); auto j=cJSON_Parse(s.c_str()); assert(j);
+        auto event=cJSON_GetObjectItem(j,"event");
+        if(cJSON_IsString(event)&&std::string(event->valuestring)=="audio_levels") {
+            assert(cJSON_IsTrue(cJSON_GetObjectItem(j,"rx_audio_available")));
+            assert(cJSON_GetObjectItem(j,"rx_audio_rms_dbfs")->valuedouble==-32.5);
+            assert(cJSON_IsFalse(cJSON_GetObjectItem(j,"tx_audio_available"))); audioReceived=true;
+        }
+        cJSON_Delete(j);
+    }
+    assert(audioReceived);
     // A command response and decoder heartbeat share the same framing safely.
     std::string command="{\"cmd\":\"get_status\"}";
     std::array<uint8_t,4> h{0,0,0,static_cast<uint8_t>(command.size())};
@@ -42,5 +55,5 @@ int main() {
     bool replied=false;
     for(int i=0;i<20&&!replied;++i){auto s=read_frame(fd);auto j=cJSON_Parse(s.c_str());assert(j);replied=cJSON_IsTrue(cJSON_GetObjectItem(j,"ok"));cJSON_Delete(j);}
     assert(replied); decoding=false; expect(false); close(fd); ctrl.stop();
-    std::cout<<"PASS: live decoder heartbeat, active/idle transitions and interleaved control responses\n";
+    std::cout<<"PASS: live audio/decoder heartbeat, active/idle transitions and interleaved control responses\n";
 }

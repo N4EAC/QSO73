@@ -77,6 +77,7 @@ struct RecentModemFrame: Identifiable {
     @Published var snr = "—"
     @Published var channel = "idle"
     @Published var audioConnected = false
+    @Published var audioLevels = AudioLevels()
     @Published var rxAudioLevel: Double?
     @Published var rigConnected = false
     @Published var frequency = "—"
@@ -374,6 +375,7 @@ struct RecentModemFrame: Identifiable {
                 decoding = object["decoding"] as? Bool ?? false
                 decoderStateTime = Date()
             }
+            if event == "audio_levels" { audioLevels.update(object); rxAudioLevel = audioLevels.rx?.rms }
             if event == "rx_frame" { recordFrame(object) }
             if event == "config_changed" { request(["cmd": "get_config"], purpose: "config") }
             return
@@ -437,6 +439,7 @@ struct RecentModemFrame: Identifiable {
             }
             channel = object["channel_state"] as? String ?? "idle"
             audioConnected = object["audio_connected"] as? Bool ?? false
+            if object["rx_audio_available"] != nil { audioLevels.update(object) }
             if audioConnected, let level = (object["rx_audio_level_db"] as? NSNumber)?.doubleValue, level.isFinite {
                 rxAudioLevel = min(0, max(-100, level))
             } else { rxAudioLevel = nil }
@@ -553,6 +556,8 @@ struct RecentModemFrame: Identifiable {
             now.timeIntervalSince(frame.time) >= -5 && now.timeIntervalSince(frame.time) <= 600
         }?.snr
     }
+    func clearMessages(in conversation: String) { entries.removeAll { $0.conversation == conversation } }
+
     func send(_ message: String, to destination: String, automatic: Bool = false) {
         guard attached, let kiss, configLoaded else { error = "Wait for the modem configuration before sending."; return }
         guard audioConnected else { error = "The modem's audio device is unavailable."; return }
@@ -606,6 +611,7 @@ struct RecentModemFrame: Identifiable {
         reporter.stop(); reportedDial = nil; reportedCATTime = .distantPast; reportedModeTime = .distantPast
         frequency = "—"; radioMode = "—"; snr = "—"; status = "Offline"; activeMode = "—"
         mtu = 0; configLoaded = false; fragmentation = false; rxCount = 0; txCount = 0
+        audioLevels = AudioLevels()
         rxAudioLevel = nil
         requestedFrequency = nil; frequencyFeedback = ""
         activity = []; recentFrames = []; recentTX = []; snrHistory = []; lastFrameSequence = 0

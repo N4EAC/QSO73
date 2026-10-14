@@ -154,14 +154,12 @@ struct MainView: View {
                         .lineLimit(2).truncationMode(.middle)
                         .frame(width: 188, height: 32, alignment: .topLeading)
                         .help("TX audio: " + modem.audioRoute)
-                    HStack(spacing: 6) {
-                        Text("RX audio").font(.caption)
-                        Text(modem.rxAudioLevel.map { String(format: "%.0f dBFS", $0) } ?? "—")
-                            .font(.caption).monospacedDigit()
-                    }.foregroundStyle(.secondary)
-                    ProgressView(value: (modem.rxAudioLevel ?? -100) + 100, total: 100)
-                        .progressViewStyle(.linear).frame(width: 188, height: 8)
-                        .help("Audio level from the selected input, refreshed every two seconds. A changing level confirms audio activity; a decoded packet confirms modem reception.")
+                    TimelineView(.periodic(from: .now, by: 0.2)) { context in
+                        VStack(spacing: 6) {
+                            AudioVU(title: "RX audio", reading: modem.audioLevels.reading(tx: false, connected: modem.attached && modem.audioConnected, now: context.date))
+                            AudioVU(title: "TX audio", reading: modem.audioLevels.reading(tx: true, connected: modem.attached && modem.audioConnected, now: context.date))
+                        }
+                    }.frame(width: 188)
                     Text(modem.statusDetails["recent_tx_frames_available"] == "1" ? "Decoded packets: \(modem.rxCount)" : "Engine RX reported: \(modem.rxCount)")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Divider().padding(.vertical, 4)
@@ -169,7 +167,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.11").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.12").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
@@ -314,6 +312,7 @@ struct ChatView: View {
             }
             HStack(alignment: .bottom) {
                 TextEditor(text: $workspace.chatDraft).font(.body).frame(height: 85).padding(6).overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+                VStack(spacing: 6) {
                 Button("Send Packet") {
                     modem.error = nil
                     if rooms.selected == "radio" { modem.send(workspace.chatDraft, to: workspace.chatTarget) }
@@ -322,11 +321,15 @@ struct ChatView: View {
                 }
                     .keyboardShortcut(.return, modifiers: .command).buttonStyle(.borderedProminent)
                     .disabled(!modem.attached || !modem.audioConnected || !canSendDraft)
+                Button("Clear Draft") { workspace.chatDraft = "" }.disabled(workspace.chatDraft.isEmpty)
+                }
             }
             HStack {
                 Toggle("Modem events", isOn: $workspace.showModemEvents).toggleStyle(.checkbox)
                 Text(rooms.selected == "radio" ? "\(workspace.chatDraft.utf8.count)/200 bytes · unacknowledged packets" : "\(workspace.chatDraft.utf8.count) text bytes · routing included in 200-byte packet limit\(canSendDraft || workspace.chatDraft.isEmpty ? "" : " · shorten message")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                Button("Clear") { linkSafety.cancel(); modem.clearMessages(in: rooms.selected) }
+                    .disabled(visibleEntries.isEmpty).help("Clears messages in the displayed conversation. Other conversations and heard history are kept.")
                 Button("Export Chat…") { workspace.exportChat(modem.entries) }.disabled(modem.entries.isEmpty)
             }
             if workspace.showModemEvents {

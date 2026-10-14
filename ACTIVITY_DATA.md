@@ -34,3 +34,12 @@ QSO73 0.4.6 separates the power-control setting from transmit meter readings. Ac
 ## Decoder indicator
 
 The compact Decoding rectangle uses the bundled engine’s `decoder_state` event, refreshed every 200 ms. `decoding` is also present in get_status. OFDM uses in_frame(), ROBUST uses confirmed carrier_active(), and MFSK uses the active decoder’s in_frame(). Tone sensing and CSMA lockout alone do not light the rectangle. Local TX and unhealthy audio suppress it; disconnect or stale events clear it. A frame attempt can still fail CRC or decoding.
+
+
+## RX/TX audio VUs and clearing text (0.4.12)
+
+The bundled engine measures RX input and TX output samples after gain: approximately 100 ms RMS/peak dBFS windows, pushed every 200 ms. Meters become unavailable on stopped/stale callbacks; clients blank stale telemetry after one second. No waveform, routing, CAT, PTT or gain behavior is changed. TX silence measures −100 dBFS; TX audio is not RF power or radio ALC.
+
+Clear removes only the currently displayed conversation's messages while preserving rooms, heard history, deduplication and settings; Clear Draft empties only its editor. Clearing cancels pending link opening.
+
+Control events use `event=audio_levels`, `rx_audio_available` / `tx_audio_available`, and `rx_audio_rms_dbfs`, `rx_audio_peak_dbfs`, `tx_audio_rms_dbfs`, `tx_audio_peak_dbfs`. The same fields are included in `get_status`; unavailable streams omit their numeric values. Measurement snapshots expire after 500 ms without callbacks, with a one-second client freshness limit. The 48 kHz engine callback samples are measured after the existing hardware-rate conversion; FT-710 44.1 kHz device conversion remains intact.

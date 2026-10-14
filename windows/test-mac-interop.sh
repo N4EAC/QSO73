@@ -45,3 +45,8 @@ windows/build/link-safety-tests /tmp/qso73-link-dns-windows.bin
 swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework AppKit -framework Combine Sources/Protocol.swift Sources/LinkSafety.swift Tests/LinkSafetyTests.swift -o build/link-safety-tests
 build/link-safety-tests /tmp/qso73-link-dns-mac.bin
 cmp /tmp/qso73-link-dns-mac.bin /tmp/qso73-link-dns-windows.bin
+
+clang++ -std=c++17 -O2 -Iwindows/vendor/modem73-win Tests/AudioMeterTests.cpp -o windows/build/audio-meter-tests
+windows/build/audio-meter-tests
+clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/tests/audio_vu_test.cpp windows/build/cJSON-native.o -o windows/build/audio-vu-tests
+windows/build/audio-vu-tests

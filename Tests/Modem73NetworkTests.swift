@@ -18,6 +18,8 @@ import Foundation
         try await awaitCondition("audio and modem configuration") { modem.attached && modem.audioConnected && modem.activeMode == "RDM-600" }
         try await awaitCondition("active decoder event") { modem.decoding }
         guard modem.rxAudioLevel == -32.5 else { fatalError("RX audio level did not reach the client") }
+        guard modem.audioLevels.reading(tx: false, connected: true)?.rms == -32.5,
+              modem.audioLevels.reading(tx: true, connected: true)?.peak == -2 else { fatalError("Live audio events did not reach client") }
         try await awaitCondition("modem activity and frame history") { !modem.activity.isEmpty && modem.recentFrames.count == 1 }
         guard modem.txQueue == 3, modem.rxErrors == 4, modem.occupancy == 12, modem.clients == 1,
               modem.recentFrames.first?.size == 64, modem.recentFrames.first?.mode == "RDM-600",
@@ -70,6 +72,7 @@ import Foundation
         // Server closes after the RX/TX/RX fixture sequence.
         try await awaitCondition("remote channel closure") { !modem.attached && modem.error != nil }
         modem.detach()
+        guard modem.audioLevels.rx == nil, modem.audioLevels.tx == nil else { fatalError("Audio meters survived disconnect") }
         guard !modem.attached, !modem.connecting, modem.status == "Offline" else { fatalError("Detach state") }
         guard modem.statusDetails.isEmpty, modem.configDetails.isEmpty, modem.rigMeters.isEmpty, modem.recentTX.isEmpty, modem.snrHistory.isEmpty else { fatalError("Stale telemetry after disconnect") }
         guard modem.activity.isEmpty, modem.recentFrames.isEmpty else { fatalError("Stale activity after disconnect") }

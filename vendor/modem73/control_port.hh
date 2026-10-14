@@ -95,6 +95,7 @@ public:
     struct TNCInterface {
         std::function<cJSON*()> get_status;
         std::function<bool()> is_decoding;
+        std::function<cJSON*()> get_audio_levels;
         std::function<cJSON*()> get_config;
         std::function<bool(cJSON* params)> set_config;
         std::function<std::string(const std::string&)> rigctl_command;
@@ -220,12 +221,22 @@ private:
         auto next_decoder_update = std::chrono::steady_clock::now();
         while (running_) {
             const auto now = std::chrono::steady_clock::now();
-            if (iface_.is_decoding && now >= next_decoder_update) {
-                cJSON* event = cJSON_CreateObject();
-                cJSON_AddStringToObject(event, "event", "decoder_state");
-                cJSON_AddBoolToObject(event, "decoding", iface_.is_decoding());
-                broadcast_event(event);
-                cJSON_Delete(event);
+            if (now >= next_decoder_update) {
+                if (iface_.is_decoding) {
+                    cJSON* event = cJSON_CreateObject();
+                    cJSON_AddStringToObject(event, "event", "decoder_state");
+                    cJSON_AddBoolToObject(event, "decoding", iface_.is_decoding());
+                    broadcast_event(event);
+                    cJSON_Delete(event);
+                }
+                if (iface_.get_audio_levels) {
+                    cJSON* event = iface_.get_audio_levels();
+                    if (event) {
+                        cJSON_AddStringToObject(event, "event", "audio_levels");
+                        broadcast_event(event);
+                        cJSON_Delete(event);
+                    }
+                }
                 next_decoder_update = now + std::chrono::milliseconds(200);
             }
             // Accept new connections

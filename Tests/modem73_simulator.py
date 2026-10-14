@@ -42,6 +42,7 @@ def serve_control():
                     elif obj['cmd'] == 'get_status':
                         polls += 1
                         sock.sendall(control_frame({'event': 'decoder_state', 'decoding': polls == 1}))
+                        sock.sendall(control_frame({'event': 'audio_levels', 'rx_audio_available': True, 'rx_audio_rms_dbfs': -32.5, 'rx_audio_peak_dbfs': -18.0, 'tx_audio_available': True, 'tx_audio_rms_dbfs': -15.0, 'tx_audio_peak_dbfs': -2.0}))
                         if polls >= 6: return
                         reply = {'ok': True, 'channel_state': 'idle', 'audio_connected': True, 'rigctl_connected': True,
                                  'rx_frame_count': 2, 'tx_frame_count': 1, 'last_snr': -8.0, 'rx_audio_level_db': -32.5, 'tx_queue': 3, 'rx_error_count': 4, 'occupancy_pct': 12, 'client_count': 1, 'last_ber': 0.006, 'dcd_active': True, 'ptt_on': False, 'occupancy_total_pct': 18, 'csma_phase': 3, 'csma_wait_ms': 120, 'csma_wait_need_ms': 600, 'csma_rank': 1, 'csma_rank_n': 3, 'csma_window_ms': 4000, 'csma_quiet_ms': 890, 'net_bps_estimate': 900, 'sync_count': 7, 'preamble_errors': 1, 'symbol_errors': 2, 'erased_symbols': 3, 'crc_errors': 1, 'recent_tx_frames': [{'seq': 1, 'time': 1700000001, 'size': 40, 'mode': 'RDM-600'}]}

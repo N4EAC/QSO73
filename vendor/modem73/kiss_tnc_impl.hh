@@ -2639,6 +2639,21 @@ public:
         return false;
     }
     
+    void add_audio_levels(cJSON* object) const {
+        auto rx = audio_ ? audio_->rx_meter() : AudioMeterSnapshot{false, -100, -100};
+        auto tx = audio_ ? audio_->tx_meter() : AudioMeterSnapshot{false, -100, -100};
+        cJSON_AddBoolToObject(object, "rx_audio_available", rx.available);
+        cJSON_AddBoolToObject(object, "tx_audio_available", tx.available);
+        if (rx.available) {
+            cJSON_AddNumberToObject(object, "rx_audio_rms_dbfs", rx.rms);
+            cJSON_AddNumberToObject(object, "rx_audio_peak_dbfs", rx.peak);
+        }
+        if (tx.available) {
+            cJSON_AddNumberToObject(object, "tx_audio_rms_dbfs", tx.rms);
+            cJSON_AddNumberToObject(object, "tx_audio_peak_dbfs", tx.peak);
+        }
+    }
+
     float get_audio_level() {
         if (!audio_ || !audio_->capture_alive()) return -100.0f;
         return audio_->instant_level_db(100);
