@@ -174,7 +174,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.16").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.17").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
@@ -293,12 +293,19 @@ struct ChatView: View {
                         }
                     }.padding()
                 }.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-                    .onChange(of: modem.entries.count) { _ in if let last = visibleEntries.last { proxy.scrollTo(last.id, anchor: .bottom) } }
+                    // Runs on every appearance, including returning from another
+                    // sidebar page, and when this conversation's last message changes.
+                    // Yield so the rebuilt scroll view can lay out its message IDs.
+                    .task(id: visibleEntries.last?.id) {
+                        guard let last = visibleEntries.last else { return }
+                        await Task.yield()
+                        guard !Task.isCancelled else { return }
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
                     .onChange(of: rooms.selected) { value in
                         workspace.selectDraftRoom(value)
                         if value == "radio" { workspace.chatTarget = "QST" }
                         if !value.hasPrefix("#") && value != "radio" { workspace.chatTarget = value }
-                        if let last = visibleEntries.last { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
             }
             HStack {

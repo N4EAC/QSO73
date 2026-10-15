@@ -27,7 +27,7 @@ struct Contact: Codable, Identifiable {
         let fields=[("CALL",c.call),("STATION_CALLSIGN",c.station),("OPERATOR",c.station),("QSO_DATE",Self.utc(c.start,"yyyyMMdd")),("TIME_ON",Self.utc(c.start,"HHmmss")),("QSO_DATE_OFF",Self.utc(c.end,"yyyyMMdd")),("TIME_OFF",Self.utc(c.end,"HHmmss")),("FREQ",String(format:"%.6f",locale:Locale(identifier:"en_US_POSIX"),Double(c.frequency)!)),("BAND",c.band!),("MODE","PKT"),("GRIDSQUARE",c.grid),("MY_GRIDSQUARE",c.myGrid),("RST_SENT",c.sent),("RST_RCVD",c.received),("COMMENT",c.note)]
         return fields.map { field($0.0,$0.1) }.joined()+"<EOR>\n"
     }
-    static func export(_ contacts: [Contact]) throws -> String { "QSO73 contact export\n<ADIF_VER:5>3.1.6<PROGRAMID:5>QSO73<PROGRAMVERSION:6>0.4.16<EOH>\n" + (try contacts.map {try $0.adif()}.joined()) }
+    static func export(_ contacts: [Contact]) throws -> String { "QSO73 contact export\n<ADIF_VER:5>3.1.6<PROGRAMID:5>QSO73<PROGRAMVERSION:6>0.4.17<EOH>\n" + (try contacts.map {try $0.adif()}.joined()) }
 }
 @MainActor final class ContactLog: ObservableObject {
     @Published private(set) var contacts: [Contact] = []

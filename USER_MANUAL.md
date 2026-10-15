@@ -2,13 +2,13 @@
 
 ## Amateur-radio chat with modem73
 
-**macOS 0.4.16 / Windows 0.4.13 test 12 | modem73 2.4.2**
+**macOS 0.4.17 / Windows 0.4.13 test 12 | modem73 2.4.2**
 
-Edition: October 14, 2026
+Edition: October 15, 2026
 
 QSO73 combines a chat client with a local radio modem. Use it for plain packet chat, shared channels, addressed direct conversations, station beacons and channel invitations.
 
-Chapters 1-13 describe the macOS client in version 0.4.16; the channel walkthrough applies to both clients. See page 16 for Windows test 12 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
+Chapters 1-13 describe the macOS client in version 0.4.17; the channel walkthrough applies to both clients. See page 16 for Windows test 12 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
 
 ### Find what you need
 
@@ -333,7 +333,7 @@ These are two separate functions. Both use the same selected modem transmit mode
 
 Enable **Beacon** in Radio Chat and select **Interval**, or configure it in Station Settings. The selectable range is **1-60 minutes**. A valid 4-, 6- or 8-character Maidenhead grid is required.
 
-Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.16`
+Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.17`
 
 It broadcasts to QST without changing your selected conversation or draft. **Beacon Now** requests a beacon while enabled and connected; a busy modem defers the request. The first automatic beacon follows one full interval after connection or configuration.
 
@@ -474,7 +474,7 @@ Use **Modem events** in Radio Chat when diagnosing startup, device routing or co
 
 ### Basis of this manual
 
-Application behavior was checked against QSO73 0.4.16 macOS source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
+Application behavior was checked against QSO73 0.4.17 macOS source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
 
 Engine source: https://github.com/RFnexus/modem73/tree/3a37c290a5330bd95f4f283feafc5ba5605bdc52
 
@@ -682,7 +682,7 @@ https://docs.quad9.net/services/
 
 Click **Clear** to remove messages from the conversation currently displayed: Radio Chat, a channel, or a direct conversation. On macOS it is beside Export Chat; on Windows it is beside the channel controls. Clearing is available while offline as well as online. It takes effect immediately. Export the chat first if you want to keep a copy.
 
-Clear does not leave a channel, clear callsigns or reception history, alter modem settings, cancel transmissions, or erase other conversations. Fresh messages appear normally. Duplicate suppression remains active, so clearing does not make previously received packets appear again. A pending web-link check is canceled when the conversation is cleared.
+Clear does not leave a channel, clear callsigns or reception history, alter modem settings, cancel transmissions, or erase other conversations. Fresh messages appear normally. On macOS, returning to Chat or selecting another conversation shows its latest message. Duplicate suppression remains active, so clearing does not make previously received packets appear again. A pending web-link check is canceled when the conversation is cleared.
 
 Use **Clear Draft** beside Send Packet to empty unsent text in the current editor. It does not transmit or remove received messages. Other conversations' drafts remain available.
 
