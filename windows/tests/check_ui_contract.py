@@ -28,3 +28,10 @@ assert 'TabCtrl_GetItemRect(tab, i, &draw.rcItem)' in source
 assert 'RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN' in extra
 assert 'InvalidateRect(pages, nullptr, TRUE)' in extra
 print('PASS: CP tabs paint the entire strip; theme and selection refresh shared tabs; caption removed')
+
+contact=extra.split('LRESULT CALLBACK contactProc(',1)[1].split('void contactEditor(',1)[0]
+for message in ['WM_ERASEBKGND','WM_CTLCOLORSTATIC','WM_CTLCOLOREDIT','WM_CTLCOLORBTN','WM_DRAWITEM']:
+    assert message in contact, message
+assert 'return proc(window, message, w, l)' in contact
+assert 'style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW' in extra
+print('PASS: contact dialog inherits CP surface, fields, labels and button rendering')

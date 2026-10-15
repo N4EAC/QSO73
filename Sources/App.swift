@@ -174,7 +174,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.15").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.16").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
@@ -374,7 +374,7 @@ struct SettingsView: View {
     @State private var serialDevices = RigSettings.serialDevices
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack { Text("Station Settings").font(.largeTitle.bold()); Spacer(); Picker("Theme",selection:$workspace.theme) { Text("Default").tag("Default"); Text("CP · Cyberpunk").tag("CP") }.frame(width:220) }
+            HStack { Text("Station Settings").font(.largeTitle.bold()); Spacer(); Picker("Theme",selection:$workspace.theme) { Text("Default").tag("Default"); Text("CP").tag("CP") }.frame(width:220) }
             HStack {
                 Stepper("RX gain: \(Int(workspace.modemSettings.rxGain)) dB",value:$workspace.modemSettings.rxGain,in:-20...20)
                 Stepper("TX gain: \(Int(workspace.modemSettings.txGain)) dB",value:$workspace.modemSettings.txGain,in:-20...20)

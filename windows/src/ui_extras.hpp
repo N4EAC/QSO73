@@ -106,7 +106,16 @@ struct ContactEditorState {
   HWND fields[12]{};
   bool done = false;
 };
+// Reuse the main window's CP palette and owner-drawn push buttons in the
+// modal contact editor. Forward only rendering messages, never app commands.
+LRESULT CALLBACK proc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK contactProc(HWND window, UINT message, WPARAM w, LPARAM l) {
+  if (settings.theme == "CP" &&
+      (message == WM_ERASEBKGND || message == WM_CTLCOLORSTATIC ||
+       message == WM_CTLCOLOREDIT || message == WM_CTLCOLORBTN ||
+       (message == WM_DRAWITEM &&
+        reinterpret_cast<DRAWITEMSTRUCT *>(l)->CtlType == ODT_BUTTON)))
+    return proc(window, message, w, l);
   auto state = reinterpret_cast<ContactEditorState *>(
       GetWindowLongPtrW(window, GWLP_USERDATA));
   if (message == WM_COMMAND && state) {
@@ -181,6 +190,8 @@ void contactEditor(bool edit) {
   SetWindowLongPtrW(dialog, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&state));
   auto make = [&](const wchar_t *type, const std::wstring &caption, int id,
                   int x, int y, int width, int height, DWORD style = 0) {
+    if (settings.theme == "CP" && wcscmp(type, L"BUTTON") == 0)
+      style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW;
     auto h = CreateWindowExW(
         wcscmp(type, L"EDIT") == 0 ? WS_EX_CLIENTEDGE : 0, type,
         caption.c_str(), WS_CHILD | WS_VISIBLE | style, x, y, width, height,

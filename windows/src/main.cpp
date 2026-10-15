@@ -33,7 +33,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.13 Windows test 11";
+constexpr const wchar_t *VERSION = L"0.4.13 Windows test 12";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -1368,7 +1368,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.13-win-test11",
+                 " QSO73 v0.4.13-win-test12",
              true});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
@@ -1394,7 +1394,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 11 - ") +
+  std::string s = std::string("QSO73 Windows test 12 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1905,7 +1905,7 @@ void makeUI() {
     TabCtrl_InsertItem(pages, TabCtrl_GetItemCount(pages), &item);
   }
   creatingPage = 1;
-  label(L"QSO73 Windows test 11", 15, 14, 275);
+  label(L"QSO73 Windows test 12", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104, 75);
