@@ -3,7 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 @MainActor final class Workspace: ObservableObject {
-    let contacts = ContactLog()
+    let contacts: ContactLog
     @Published var theme = UserDefaults.standard.string(forKey:"qso73.theme.v1") ?? "Default" { didSet { UserDefaults.standard.set(theme,forKey:"qso73.theme.v1") } }
     @Published var settings = StationSettings()
     @Published var modemSettings = Modem73Settings()
@@ -26,7 +26,8 @@ import UniformTypeIdentifiers
     private var lastMacroTime = Date.distantPast
     @Published var error: String?
     private let settingsKey = "stationSettings.v1"
-    init() {
+    init(contactDefaults: UserDefaults? = .standard) {
+        contacts = ContactLog(defaults: contactDefaults)
         if let bytes = UserDefaults.standard.data(forKey: "beaconSettings.v1"), let value = try? JSONDecoder().decode(BeaconSettings.self, from: bytes) { beaconSettings = value }
         if let bytes = UserDefaults.standard.data(forKey: "radioMacros.v1"), let value = try? JSONDecoder().decode(RadioMacroSettings.self, from: bytes) { radioMacros = value }
         if let bytes = UserDefaults.standard.data(forKey: settingsKey), let s = try? JSONDecoder().decode(StationSettings.self, from: bytes) { settings = s }
@@ -137,6 +138,9 @@ struct MainView: View {
     @EnvironmentObject var workspace: Workspace
     @EnvironmentObject var modem: Modem
     @State private var selection: Section? = .chat
+    init(initialSection: Section = .chat) {
+        _selection = State(initialValue: initialSection)
+    }
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 16) {
@@ -170,7 +174,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.14").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.15").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
