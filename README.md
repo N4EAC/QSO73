@@ -1,6 +1,6 @@
 # QSO73
 
-[![macOS](https://img.shields.io/badge/macOS-13%2B%20%C2%B7%20Apple%20Silicon-007AFF?logo=apple&logoColor=white)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.13)
+[![macOS](https://img.shields.io/badge/macOS-13%2B%20%C2%B7%20Apple%20Silicon-007AFF?logo=apple&logoColor=white)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.14)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64%20%C2%B7%20TESTING-orange)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.13-windows-test11)
 [![Modem](https://img.shields.io/badge/modem73-2.4.2-008C95)](https://github.com/RFnexus/modem73)
 
@@ -12,7 +12,7 @@ Source, documentation and release downloads are publicly available in this repos
 
 | Platform | Version | Package | Status |
 | --- | --- | --- | --- |
-| macOS 13+, Apple Silicon | 0.4.13 | [macOS DMG](https://github.com/N4EAC/QSO73/releases/download/v0.4.13/QSO73-0.4.13-macOS-arm64.dmg) | Development build |
+| macOS 13+, Apple Silicon | 0.4.14 | [macOS DMG](https://github.com/N4EAC/QSO73/releases/download/v0.4.14/QSO73-0.4.14-macOS-arm64.dmg) | Development build |
 | Windows 10 (1903+) / Windows 11, x64 | 0.4.13 test 11 | [Portable Windows ZIP](https://github.com/N4EAC/QSO73/releases/download/v0.4.13-windows-test11/QSO73-0.4.13-windows-x64-test11.zip) | **Testing / prerelease** |
 
 Use the platform-specific releases above. Windows remains a testing build with a smaller feature set. The macOS app targets Apple Silicon; an Intel Mac build is not supplied.
@@ -134,3 +134,5 @@ Choose **Default** or **CP (Cyberpunk)** in Setup/Station Settings. CP uses dark
 The 23-page manual covers Setup/gain/themes on page 22 and contacts/LoTW on page 23. Windows contacts.json and settings.json are personal files: preserve them during portable-folder updates; release ZIPs exclude them.
 
 Validation includes gain/silence/clipping PCM checks, live gain command/readback, existing CAT/chat/reporting regressions, protocol and DSP interoperability, identical macOS/Windows ADIF fixtures with independent field-length parsing, contact save/edit/corruption checks, bounded macOS theme/contact layouts, and portable dependency checks. Actual Windows GUI/radio Stop/restart verification and TQSL/LoTW acceptance with a station certificate remain pending.
+
+macOS 0.4.14 removes the contact editor’s fixed-height scrolling form. All fields and Save Contact stay visible, with the saved-contact list using the remaining window space.

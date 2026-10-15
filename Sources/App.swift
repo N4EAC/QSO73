@@ -170,7 +170,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.13").font(.caption).foregroundStyle(.secondary)
+                    Text("modem73 · 0.4.14").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
