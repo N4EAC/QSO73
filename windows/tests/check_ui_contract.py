@@ -20,3 +20,11 @@ assert 'BS_GROUPBOX' in source and 'Radio frequency' in source
 extra=(Path(__file__).resolve().parents[1]/'src/ui_extras.hpp').read_text()
 assert 'GetWindowLongPtrW(button.first,GWL_STYLE)&~BS_TYPEMASK' in re.sub(r'\s+', '', extra)
 print('PASS: separate UI pages, frequency group, console-break protection and theme changes preserve control visibility')
+
+assert 'CP = Cyberpunk' not in source
+assert 'SetWindowSubclass(pages, tabThemeProc, 1, 0)' in source
+assert 'WM_PRINTCLIENT' in source and 'DefSubclassProc(tab, message, w, l)' in source
+assert 'TabCtrl_GetItemRect(tab, i, &draw.rcItem)' in source
+assert 'RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN' in extra
+assert 'InvalidateRect(pages, nullptr, TRUE)' in extra
+print('PASS: CP tabs paint the entire strip; theme and selection refresh shared tabs; caption removed')

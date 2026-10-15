@@ -33,7 +33,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.13 Windows test 10";
+constexpr const wchar_t *VERSION = L"0.4.13 Windows test 11";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -1368,7 +1368,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.13-win-test10",
+                 " QSO73 v0.4.13-win-test11",
              true});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
@@ -1394,7 +1394,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 10 - ") +
+  std::string s = std::string("QSO73 Windows test 11 - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1851,12 +1851,53 @@ void layout(int w, int h) {
   MoveWindow(controls[USERS], w - 160, 87, 70, 27, TRUE);
   MoveWindow(controls[LEAVE], w - 85, 87, 70, 27, TRUE);
 }
+// The native tab window paints its unused strip with system colors even when
+// its items are owner-drawn. Paint the whole CP strip; retain native input,
+// keyboard navigation and accessibility through the common-control subclass.
+LRESULT CALLBACK tabThemeProc(HWND tab, UINT message, WPARAM w, LPARAM l,
+                              UINT_PTR, DWORD_PTR) {
+  if (settings.theme == "CP" &&
+      (message == WM_PAINT || message == WM_PRINTCLIENT ||
+       message == WM_ERASEBKGND)) {
+    PAINTSTRUCT paint{};
+    HDC dc = message == WM_PAINT ? BeginPaint(tab, &paint)
+                                : reinterpret_cast<HDC>(w);
+    RECT bounds;
+    GetClientRect(tab, &bounds);
+    auto background = CreateSolidBrush(RGB(10, 7, 24));
+    FillRect(dc, &bounds, background);
+    DeleteObject(background);
+    if (message != WM_ERASEBKGND) {
+      for (int i = 0; i < TabCtrl_GetItemCount(tab); ++i) {
+        DRAWITEMSTRUCT draw{};
+        draw.CtlType = ODT_TAB;
+        draw.CtlID = PAGES;
+        draw.itemID = i;
+        draw.itemAction = ODA_DRAWENTIRE;
+        draw.itemState = i == TabCtrl_GetCurSel(tab) ? ODS_SELECTED : 0;
+        if (GetFocus() == tab && i == TabCtrl_GetCurFocus(tab) &&
+            !(SendMessageW(tab, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS))
+          draw.itemState |= ODS_FOCUS;
+        draw.hwndItem = tab;
+        draw.hDC = dc;
+        TabCtrl_GetItemRect(tab, i, &draw.rcItem);
+        SendMessageW(GetParent(tab), WM_DRAWITEM, PAGES,
+                     reinterpret_cast<LPARAM>(&draw));
+      }
+    }
+    if (message == WM_PAINT)
+      EndPaint(tab, &paint);
+    return message == WM_ERASEBKGND ? TRUE : 0;
+  }
+  return DefSubclassProc(tab, message, w, l);
+}
 void makeUI() {
   font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
   INITCOMMONCONTROLSEX common{sizeof(common), ICC_TAB_CLASSES};
   InitCommonControlsEx(&common);
   pages = child(WC_TABCONTROLW, L"", PAGES, 5, 4, 900, 30,
                 TCS_OWNERDRAWFIXED | WS_TABSTOP);
+  SetWindowSubclass(pages, tabThemeProc, 1, 0);
   for (auto title : {L"Chat", L"Setup", L"Contact Log"}) {
     TCITEMW item{};
     item.mask = TCIF_TEXT;
@@ -1864,7 +1905,7 @@ void makeUI() {
     TabCtrl_InsertItem(pages, TabCtrl_GetItemCount(pages), &item);
   }
   creatingPage = 1;
-  label(L"QSO73 Windows test 10", 15, 14, 275);
+  label(L"QSO73 Windows test 11", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104, 75);
@@ -1912,7 +1953,7 @@ void makeUI() {
         650);
   label(L"Theme", 330, 283, 100);
   combo(THEME, 330, 308, 280, {"Default", "CP"}, settings.theme);
-  label(L"CP = Cyberpunk. Theme changes apply immediately.", 330, 347, 650);
+  label(L"Theme changes apply immediately.", 330, 347, 650);
   label(L"Configure the radio here; chat and audio meters are on Chat.", 330,
         408, 650);
   creatingPage = 0;

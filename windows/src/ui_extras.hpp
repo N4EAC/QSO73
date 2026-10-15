@@ -75,6 +75,7 @@ void changePage(int page) {
   for (auto &control : pageControls)
     ShowWindow(control.handle, control.page == page ? SW_SHOW : SW_HIDE);
   TabCtrl_SetCurSel(pages, page);
+  InvalidateRect(pages, nullptr, TRUE);
   updateContactList();
   RECT rect;
   GetClientRect(win, &rect);
@@ -96,7 +97,9 @@ void applyTheme() {
   showHistory();
   for (auto &control : pageControls)
     InvalidateRect(control.handle, nullptr, TRUE);
-  InvalidateRect(win, nullptr, TRUE);
+  // Include shared controls (tabs, Start/Stop and status), not just page items.
+  RedrawWindow(win, nullptr, nullptr,
+               RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 struct ContactEditorState {
   Contact record;

@@ -1,7 +1,7 @@
 # QSO73
 
 [![macOS](https://img.shields.io/badge/macOS-13%2B%20%C2%B7%20Apple%20Silicon-007AFF?logo=apple&logoColor=white)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.13)
-[![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64%20%C2%B7%20TESTING-orange)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.13-windows-test10)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64%20%C2%B7%20TESTING-orange)](https://github.com/N4EAC/QSO73/releases/tag/v0.4.13-windows-test11)
 [![Modem](https://img.shields.io/badge/modem73-2.4.2-008C95)](https://github.com/RFnexus/modem73)
 
 QSO73 is an amateur-radio chat client using modem73 for HF, VHF and UHF packet communication. It offers QST broadcasts, addressed chat, shared channels with topics and heard-user lists, direct conversations, signal reports and optional beacons. Channels and direct conversations use QSO73's own radio protocol; no Internet connection or central chat server is needed.
@@ -13,7 +13,7 @@ Source, documentation and release downloads are publicly available in this repos
 | Platform | Version | Package | Status |
 | --- | --- | --- | --- |
 | macOS 13+, Apple Silicon | 0.4.13 | [macOS DMG](https://github.com/N4EAC/QSO73/releases/download/v0.4.13/QSO73-0.4.13-macOS-arm64.dmg) | Development build |
-| Windows 10 (1903+) / Windows 11, x64 | 0.4.13 test 10 | [Portable Windows ZIP](https://github.com/N4EAC/QSO73/releases/download/v0.4.13-windows-test10/QSO73-0.4.13-windows-x64-test10.zip) | **Testing / prerelease** |
+| Windows 10 (1903+) / Windows 11, x64 | 0.4.13 test 11 | [Portable Windows ZIP](https://github.com/N4EAC/QSO73/releases/download/v0.4.13-windows-test11/QSO73-0.4.13-windows-x64-test11.zip) | **Testing / prerelease** |
 
 Use the platform-specific releases above. Windows remains a testing build with a smaller feature set. The macOS app targets Apple Silicon; an Intel Mac build is not supplied.
 
@@ -39,9 +39,9 @@ The macOS app is ad-hoc signed and is not notarized. The modem processes at 48 k
 3. With rigctl PTT selected, choose the radio model, CAT COM port and matching baud. **Hamlib 4.7.2 is bundled**; no separate installation, terminal command or PATH change is needed.
 4. Save settings and start the modem. QSO73 starts its bundled rigctld, checks a frequency read and starts modem73. Stop Modem releases PTT and closes its processes.
 
-Test 10 includes a separate text-console activity display, **Beacon Now** and actual CAT frequency readback. In the activity console, use PgUp/PgDn or arrows to navigate, Space to pause the display and Q/Esc to close it. Closing the display keeps the modem and chat running.
+Test 11 includes a separate text-console activity display, **Beacon Now** and actual CAT frequency readback. In the activity console, use PgUp/PgDn or arrows to navigate, Space to pause the display and Q/Esc to close it. Closing the display keeps the modem and chat running.
 
-A tester reported successful radio connection and over-the-air transmission with Windows test 2. The new test 10 controls still need Windows hardware verification. See the [validation report](windows/TEST_RESULTS.md).
+A tester reported successful radio connection and over-the-air transmission with Windows test 2. The new test 11 controls still need Windows hardware verification. See the [validation report](windows/TEST_RESULTS.md).
 
 ## Conversations and airtime
 
@@ -83,7 +83,7 @@ Third-party source and notices are preserved. See [macOS notices](THIRD_PARTY_NO
 
 Both platforms now have a PING button and saved Auto PING replies option (off by default). PING targets To in Radio Chat, the selected direct callsign, or QST from a channel. Automatic replies provide the responder's callsign, grid and measured SNR of the specific request. Both operators need these updated builds and current bundled engines. No matching measurement means no reply. Replies wait for idle/empty-queue conditions, are rate limited, and cannot create reply loops.
 
-Windows test 10 explicitly scrolls new conversation messages to the end and opens a compact modem-style activity dashboard showing signal/SNR/BER, CSMA timing, occupancy and activity histories, real RX/TX statistics, recent frames and CAT frequency. Full raw diagnostics and logs remain available below the summary.
+Windows test 11 explicitly scrolls new conversation messages to the end and opens a compact modem-style activity dashboard showing signal/SNR/BER, CSMA timing, occupancy and activity histories, real RX/TX statistics, recent frames and CAT frequency. Full raw diagnostics and logs remain available below the summary.
 
 ## Decoder reception indicator
 
@@ -102,7 +102,7 @@ Native encoding/policy, independent IPFIX parsing and loopback UDP transport tes
 
 Version 0.4.11 introduced **Heard...** beside PING on both platforms. With To set to QST, ask all listening QSO73 stations for up to three recent callsigns, or ask whether they heard a specific callsign. Select a station to query it alone. **Auto Heard replies** is saved and off by default; responding operators must enable it. Replies include reception age and measured SNR when available, use a randomized delay, share idle/queue gating, and are rate limited. History is limited to the past hour of the current modem session. See [Heard protocol](HEARD_PROTOCOL.md).
 
-Messages show UTC timestamps. Your operator messages are blue, generated queries/replies and announcements are orange, and received operator messages are green. Opaque colors/backgrounds maintain text contrast. Windows test 10 uses a rich-text transcript and shows a live beacon countdown, including paused and waiting-for-idle states.
+Messages show UTC timestamps. Your operator messages are blue, generated queries/replies and announcements are orange, and received operator messages are green. Opaque colors/backgrounds maintain text contrast. Windows test 11 uses a rich-text transcript and shows a live beacon countdown, including paused and waiting-for-idle states.
 
 Clicked HTTPS URLs are checked against the free Cloudflare and Quad9 malware-filtering DNS services before opening the default browser. No API key is required. Both providers must return a valid public resolution; invalid URLs, local/private destinations, blocked domains, failed checks and inconclusive results do not open. Only the hostname is submitted, and arriving messages never trigger automatic lookups. These are known-malicious-domain checks, not full URL or page scans; they cannot guarantee safety of paths, redirects or newly malicious sites. See [checked-link policy](LINK_SECURITY.md).
 
@@ -118,12 +118,12 @@ Version 0.4.12 introduced live RX/TX audio meters to both clients. RX measures s
 PCM level/gain/silence/staleness tests, live audio/control framing, macOS meter layouts, existing radio/chat regressions and portable dependency checks pass. Windows GUI/hardware meter verification remains pending.
 
 
-Windows test 10 corrects the owner-draw styles for RX/TX audio meters and the Decoding indicator, and prevents startup overlap with the transcript. Both meter labels remain visible offline, with unavailable readings until audio telemetry arrives.
+Windows test 11 corrects the owner-draw styles for RX/TX audio meters and the Decoding indicator, and prevents startup overlap with the transcript. Both meter labels remain visible offline, with unavailable readings until audio telemetry arrives.
 
 
 ## Setup, gain, themes and contact logging (0.4.13)
 
-Windows test 10 separates **Chat**, **Setup** and **Contact Log** into tabs. Start/Stop stays at the top; **Stop Modem keeps the client open**, releases PTT and closes its owned modem/Hamlib processes. The shutdown path now protects the GUI from the console CTRL_BREAK signal. Frequency entry is in a separately labeled radio-frequency group on both clients.
+Windows test 11 separates **Chat**, **Setup** and **Contact Log** into tabs. Start/Stop stays at the top; **Stop Modem keeps the client open**, releases PTT and closes its owned modem/Hamlib processes. The shutdown path now protects the GUI from the console CTRL_BREAK signal. Frequency entry is in a separately labeled radio-frequency group on both clients.
 
 Both clients offer RX/TX software gain from **−20 to +20 dB** (attenuation through 10x amplification), saved for startup and applied while idle. RX gain acts before decoding; TX gain multiplies the existing TX audio percentage. Adjusted samples are limited at digital full scale and reflected in the VUs. Watch peak levels: excessive gain clips and amplifies noise. Use the updated bundled engine for this feature.
 

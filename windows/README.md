@@ -1,10 +1,10 @@
 # QSO73 Windows portable test client
 
-**Version 0.4.13 Windows test 10 — Windows 10 (1903 or later) / Windows 11, x64.**
+**Version 0.4.13 Windows test 11 — Windows 10 (1903 or later) / Windows 11, x64.**
 
 This is an early Windows companion for testing with QSO73 0.4.13 on macOS. It implements the same QSO73 v1 channel/direct protocol and bundles the official Windows modem73 engine. Extract the **entire folder** to a writable directory and run **QSO73.exe**. No installer, Python, MSYS2 or WSL is required by the tester. Keep both the `engine` and `hamlib` folders beside the client. Hamlib 4.7.2 and all its runtime DLLs are included; no separate Hamlib installation or PATH changes are needed. Settings and logs stay inside the portable folder. Running inside the ZIP is not supported.
 
-The Windows executable has been cross-compiled on macOS. Packet compatibility and the modem DSP have local automated checks. A tester has reported successful radio connection and over-the-air message transmission with Windows test 2. The PING controls, improved activity dashboard and automatic chat scrolling in test 10 still require verification on Windows hardware. The upstream Windows modem port is itself experimental. This package is unsigned.
+The Windows executable has been cross-compiled on macOS. Packet compatibility and the modem DSP have local automated checks. A tester has reported successful radio connection and over-the-air message transmission with Windows test 2. The PING controls, improved activity dashboard and automatic chat scrolling in test 11 still require verification on Windows hardware. The upstream Windows modem port is itself experimental. This package is unsigned.
 
 ## Prepare the Windows station
 
@@ -61,7 +61,7 @@ Only the **builder** needs MSYS2. The recipient of a built ZIP does not.
 1. Install official MSYS2, then open **MSYS2 MinGW64**.
 2. Install the build tools: `pacman -S --needed make zip unzip mingw-w64-x86_64-gcc`.
 3. From Windows PowerShell, run `./Build-Windows.ps1` in this source folder. If MSYS2 is elsewhere, use `./Build-Windows.ps1 -MsysRoot 'D:\msys64'`.
-4. The script builds the client and bundled engine and creates **dist/QSO73-0.4.13-windows-x64-test10.zip**. Share that ZIP, not just QSO73.exe.
+4. The script builds the client and bundled engine and creates **dist/QSO73-0.4.13-windows-x64-test11.zip**. Share that ZIP, not just QSO73.exe.
 
 Alternatively, in MinGW64, run `CXX=g++ CC=gcc WINDRES=windres ./build.sh`. On macOS/Linux with mingw-w64 available, run `./build.sh`. The source dependencies are vendored and pinned; no engine or Hamlib downloads occur during a build. `build.sh` can be rerun after editing the client. The root Mac build is unchanged.
 
@@ -111,8 +111,12 @@ Clear removes only the currently displayed conversation's messages while preserv
 
 ## 0.4.13 setup, gain, themes and contacts
 
-Windows test 10 has separate Chat, Setup and Contact Log tabs. The radio frequency has its own labeled group. Stop Modem keeps the GUI open: a custom console handler protects the client against both CTRL_C and CTRL_BREAK while signaling its own child processes. Handler registration is checked before sending a console signal.
+Windows test 11 has separate Chat, Setup and Contact Log tabs. The radio frequency has its own labeled group. Stop Modem keeps the GUI open: a custom console handler protects the client against both CTRL_C and CTRL_BREAK while signaling its own child processes. Handler registration is checked before sending a console signal.
 
 Both clients provide saved Default/CP (Cyberpunk) themes and -20…+20 dB RX/TX software gain. RX is scaled before decoding; TX gain multiplies TX audio percentage. Samples are limited at digital full scale and meters measure the adjusted streams. Gain changes apply only when idle and are saved for startup. Updated bundled engines expose rx_gain_db / tx_gain_db in get_config and validate them in set_config; CLI options are --rx-gain-db / --tx-gain-db. Older Mac profiles retain their settings with zero gain defaults.
 
 Both clients have manual contact creation/editing and ADIF 3.1.6 export using PKT, UTC date/time on/off, frequency/band, station/operator callsigns and optional grid/report/comment fields. ADIF is for TQSL signing and LoTW submission, not direct unsigned upload. Portable contacts.json is user data and is never included in release ZIPs.
+
+## Windows test 11 theme correction
+
+The CP theme colors the entire tab strip, including Chat, Setup and Contact Log. Switching themes redraws shared controls immediately; Default restores system tab rendering. The theme selection no longer displays the CP definition caption. Cross-compilation and UI contract checks pass; visual verification on Windows remains pending.
