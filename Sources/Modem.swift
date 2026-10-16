@@ -65,7 +65,7 @@ struct RecentModemFrame: Identifiable {
     }
     let beacon = BeaconController()
     let rooms: ChatRooms
-    let callsigns = CallsignList()
+    let callsigns: CallsignList
     let channelAnnouncements = ChannelAnnouncements()
     private var lastAutomaticSubmission = Date.distantPast
     private var automaticTransmissionReady: Bool {
@@ -139,6 +139,7 @@ struct RecentModemFrame: Identifiable {
     private var pending: Request?
 
     init(chatDefaults: UserDefaults? = .standard) {
+        callsigns = CallsignList(defaults: chatDefaults)
         autoHeardReply = chatDefaults?.bool(forKey: "qso73.autoHeardReply.v1") ?? false
         reporter = PSKReporter(defaults: chatDefaults)
         rooms = ChatRooms(defaults: chatDefaults)
@@ -329,6 +330,8 @@ struct RecentModemFrame: Identifiable {
     }
     private func append(_ original: ChatEntry) {
         var entry = original
+        let other = entry.direction.hasPrefix("You") ? entry.destination : entry.source
+        if let other { callsigns.remember(other, excluding: station.callsign, text: original.text, received: !entry.direction.hasPrefix("You"), at: entry.time) }
         do {
             if entry.text.hasPrefix(HeardMessage.prefix) {
                 guard let readable = try heard.receive(entry.text, source: PacketAddress.canonical(entry.source ?? ""), destination: PacketAddress.canonical(entry.destination ?? ""), own: PacketAddress.canonical(station.callsign), outgoing: entry.direction.hasPrefix("You"), enabled: autoHeardReply, now: entry.time, delay: Double.random(in: 4...24)) else { return }
@@ -339,8 +342,6 @@ struct RecentModemFrame: Identifiable {
                 entry.text = readable; entry.automatic = true
             }
             guard let routed = try rooms.route(entry, local: station.callsign, outgoing: entry.direction.hasPrefix("You")) else { return }
-            let other = entry.direction.hasPrefix("You") ? entry.destination : entry.source
-            if let other { callsigns.remember(other, excluding: station.callsign) }
             entries.append(routed)
         } catch { log("Ignored invalid QSO73 conversation packet: \(error.localizedDescription)") }
         if entries.count > 2000 { entries.removeFirst(entries.count - 2000) }

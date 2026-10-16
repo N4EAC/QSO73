@@ -35,3 +35,8 @@ for message in ['WM_ERASEBKGND','WM_CTLCOLORSTATIC','WM_CTLCOLOREDIT','WM_CTLCOL
 assert 'return proc(window, message, w, l)' in contact
 assert 'style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW' in extra
 print('PASS: contact dialog inherits CP surface, fields, labels and button rendering')
+
+assert '{"Default", "CP", "Crimson"}' in source
+assert 'L"Contacts"' in source and 'DIRECTORYLIST' in source and 'FAVORITELIST' in source
+assert 'isCustomTheme()' in contact
+print('PASS: Crimson uses shared contact rendering; separate directory and favorites controls are created')

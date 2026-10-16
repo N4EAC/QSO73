@@ -69,3 +69,31 @@ struct ActivityPanel: View {
         }.padding(detached ? 12 : 8)
     }
 }
+
+// A fixed two-line summary belongs inside Chat, keeping the transcript flexible.
+struct CompactModemActivity: View {
+    @ObservedObject var modem: Modem
+    @ObservedObject var presentation: ActivityPresentation
+    var body: some View {
+        VStack(alignment:.leading,spacing:4) {
+            HStack(spacing:12) {
+                Label("Activity",systemImage:"waveform.path").font(.caption.bold())
+                Text(modem.activeMode + " · " + modem.channel.uppercased())
+                Text("SNR " + modem.snr)
+                Spacer()
+                Button("Full / Undock") { presentation.undock(modem) }
+                Button("Hide") { presentation.dockedVisible = false }
+            }
+            HStack(spacing:16) {
+                Text("RX " + (modem.rxAudioLevel.map { String(format:"%.0f dBFS",$0) } ?? "—"))
+                Text("BER " + (modem.lastBER.map { String(format:"%.2f%%",$0) } ?? "—"))
+                Text("CSMA " + modem.csmaDescription)
+                Text("Queue \(modem.txQueue)")
+                Spacer()
+                Text("RX \(modem.rxCount) · TX \(modem.txCount)")
+            }.foregroundStyle(.secondary)
+        }.font(.caption).lineLimit(1).padding(8)
+        .background(Color.secondary.opacity(0.08),in:RoundedRectangle(cornerRadius:8))
+        .fixedSize(horizontal:false,vertical:true)
+    }
+}

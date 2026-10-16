@@ -87,12 +87,12 @@ void applyTheme() {
     SetWindowLongPtrW(
         button.first, GWL_STYLE,
         (GetWindowLongPtrW(button.first, GWL_STYLE) & ~BS_TYPEMASK) |
-            (settings.theme == "CP" ? BS_OWNERDRAW
+            (isCustomTheme() ? BS_OWNERDRAW
                                     : (button.second & BS_TYPEMASK)));
     InvalidateRect(button.first, nullptr, TRUE);
   }
   SendMessageW(history, EM_SETBKGNDCOLOR, 0,
-               settings.theme == "CP" ? RGB(18, 12, 38) : RGB(255, 255, 255));
+               isCustomTheme() ? themeColor(RGB(18, 12, 38), RGB(44, 14, 24)) : RGB(255, 255, 255));
   renderedHistory.clear();
   showHistory();
   for (auto &control : pageControls)
@@ -110,7 +110,7 @@ struct ContactEditorState {
 // modal contact editor. Forward only rendering messages, never app commands.
 LRESULT CALLBACK proc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK contactProc(HWND window, UINT message, WPARAM w, LPARAM l) {
-  if (settings.theme == "CP" &&
+  if (isCustomTheme() &&
       (message == WM_ERASEBKGND || message == WM_CTLCOLORSTATIC ||
        message == WM_CTLCOLOREDIT || message == WM_CTLCOLORBTN ||
        (message == WM_DRAWITEM &&
@@ -190,7 +190,7 @@ void contactEditor(bool edit) {
   SetWindowLongPtrW(dialog, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&state));
   auto make = [&](const wchar_t *type, const std::wstring &caption, int id,
                   int x, int y, int width, int height, DWORD style = 0) {
-    if (settings.theme == "CP" && wcscmp(type, L"BUTTON") == 0)
+    if (isCustomTheme() && wcscmp(type, L"BUTTON") == 0)
       style = (style & ~BS_TYPEMASK) | BS_OWNERDRAW;
     auto h = CreateWindowExW(
         wcscmp(type, L"EDIT") == 0 ? WS_EX_CLIENTEDGE : 0, type,

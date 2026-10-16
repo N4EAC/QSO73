@@ -64,3 +64,6 @@ build/audio-vu-tests
 
 swiftc -swift-version 5 -module-cache-path build/module-cache Sources/Protocol.swift Sources/ContactLog.swift Tests/ContactLogTests.swift -o build/contact-log-tests
 build/contact-log-tests
+
+swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network -framework Combine Sources/Protocol.swift Sources/CallsignList.swift Tests/StationDirectoryTests.swift -o build/station-directory-tests
+build/station-directory-tests

@@ -10,6 +10,7 @@ make -B -C "$engine_source" CC="clang -mmacosx-version-min=13.0" UI_FLAGS= NCURS
 cp "$engine_source/modem73" "$bundle/Contents/MacOS/modem73"
 swiftc -swift-version 5 -target "$(uname -m)-apple-macosx13.0" -O -module-cache-path build/module-cache -framework SwiftUI -framework AppKit -framework AVFoundation -framework Network Sources/*.swift -o "$bundle/Contents/MacOS/QSO73"
 cp Info.plist "$bundle/Contents/Info.plist"
+cp Assets/ContactMap.html "$bundle/Contents/Resources/ContactMap.html"
 cp Assets/AppIcon.icns "$bundle/Contents/Resources/AppIcon.icns"
 cp "$engine_source/LICENSE" "$bundle/Contents/Resources/Licenses/modem73.txt"
 for library in dsp code modem; do

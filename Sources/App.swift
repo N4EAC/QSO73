@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 
 @MainActor final class Workspace: ObservableObject {
     let contacts: ContactLog
-    @Published var theme = UserDefaults.standard.string(forKey:"qso73.theme.v1") ?? "Default" { didSet { UserDefaults.standard.set(theme,forKey:"qso73.theme.v1") } }
+    private let themeDefaults: UserDefaults?
+    @Published var theme: String { didSet { themeDefaults?.set(theme,forKey:"qso73.theme.v1") } }
     @Published var settings = StationSettings()
     @Published var modemSettings = Modem73Settings()
     @Published var rigSettings = RigSettings()
@@ -26,7 +27,10 @@ import UniformTypeIdentifiers
     private var lastMacroTime = Date.distantPast
     @Published var error: String?
     private let settingsKey = "stationSettings.v1"
-    init(contactDefaults: UserDefaults? = .standard) {
+    init(contactDefaults: UserDefaults? = .standard, themeDefaults: UserDefaults? = .standard) {
+        self.themeDefaults = themeDefaults
+        let savedTheme = themeDefaults?.string(forKey:"qso73.theme.v1") ?? "Default"
+        theme = ["Default","CP","Crimson"].contains(savedTheme) ? savedTheme : "Default"
         contacts = ContactLog(defaults: contactDefaults)
         if let bytes = UserDefaults.standard.data(forKey: "beaconSettings.v1"), let value = try? JSONDecoder().decode(BeaconSettings.self, from: bytes) { beaconSettings = value }
         if let bytes = UserDefaults.standard.data(forKey: "radioMacros.v1"), let value = try? JSONDecoder().decode(RadioMacroSettings.self, from: bytes) { radioMacros = value }
@@ -122,7 +126,7 @@ import UniformTypeIdentifiers
 }
 
 enum Section: String, CaseIterable, Identifiable {
-    case chat = "Radio Chat", activity = "Modem Activity", settings = "Station Settings", logbook = "Contact Log"
+    case chat = "Radio Chat", activity = "Modem Activity", settings = "Station Settings", logbook = "Contact Log", contacts = "Contacts & Favorites"
     var id: Self { self }
     var icon: String {
         switch self {
@@ -130,6 +134,7 @@ enum Section: String, CaseIterable, Identifiable {
         case .activity: return "waveform.path"
         case .settings: return "gearshape"
         case .logbook: return "book.closed"
+        case .contacts: return "person.crop.rectangle.stack"
         }
     }
 }
@@ -151,7 +156,7 @@ struct MainView: View {
                         }
                         Text("QSO73").font(.system(size: 30, weight: .bold, design: .rounded))
                     }
-                    Text("POWERED BY MODEM73").font(.caption).tracking(2).foregroundStyle(workspace.theme == "CP" ? Color.pink : Color.secondary)
+                    Text("POWERED BY MODEM73").font(.caption).tracking(2).foregroundStyle(QSOTheme(name:workspace.theme).custom ? QSOTheme(name:workspace.theme).outline : Color.secondary)
                 }.padding(.horizontal).padding(.top, 20)
                 List(Section.allCases, selection: $selection) { section in
                     Label(section.rawValue, systemImage: section.icon).tag(section)
@@ -174,20 +179,14 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("modem73 · 0.4.17").font(.caption).foregroundStyle(.secondary)
+                    Text("QSO73 1.1.0 · modem73").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
             Group {
                 switch selection ?? .chat {
                 case .chat:
-                    if activityPresentation.dockedVisible && !activityPresentation.isDetached {
-                        VSplitView {
-                            ChatView().frame(minHeight: 420)
-                            ActivityPanel(modem: modem, presentation: activityPresentation, detached: false)
-                                .frame(minHeight: 160, idealHeight: 240)
-                        }
-                    } else { ChatView() }
+                    ChatView()
                 case .activity:
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -200,11 +199,12 @@ struct MainView: View {
                     }
                 case .settings: SettingsView()
                 case .logbook: ContactLogView(log:workspace.contacts)
+                case .contacts: StationDirectoryView(directory:modem.callsigns,theme:workspace.theme,embedded:true) { call in modem.rooms.selected = "radio"; workspace.selectDraftRoom("radio"); workspace.chatTarget = call; selection = .chat }
                 }
-            }.padding(24).background(workspace.theme == "CP" ? Color(red:0.035,green:0.035,blue:0.09) : Color(nsColor:.windowBackgroundColor))
+            }.padding(24).background(QSOTheme(name:workspace.theme).custom ? QSOTheme(name:workspace.theme).background : Color(nsColor:.windowBackgroundColor))
         }
-        .preferredColorScheme(workspace.theme == "CP" ? .dark : nil)
-        .tint(workspace.theme == "CP" ? Color.cyan : Color.accentColor)
+        .preferredColorScheme(QSOTheme(name:workspace.theme).custom ? .dark : nil)
+        .tint(QSOTheme(name:workspace.theme).custom ? QSOTheme(name:workspace.theme).accent : Color.accentColor)
         .alert("QSO73", isPresented: Binding(get: { workspace.error != nil || modem.error != nil }, set: { if !$0 { workspace.error = nil; modem.error = nil } })) {
             Button("OK") { workspace.error = nil; modem.error = nil }
         } message: { Text(workspace.error ?? modem.error ?? "") }
@@ -225,7 +225,7 @@ struct ChatView: View {
         return (try? RoomEnvelope(kind: "msg", room: rooms.selected, text: workspace.chatDraft).encoded()) != nil && (!rooms.selected.hasPrefix("#") || rooms.joined.contains(rooms.selected))
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: activityPresentation.dockedVisible && !activityPresentation.isDetached ? 8 : 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Radio Chat").font(.largeTitle.bold())
@@ -280,6 +280,9 @@ struct ChatView: View {
                 } }
             }.font(.caption).foregroundStyle(.secondary)
             if !modem.frequencyFeedback.isEmpty { Text(modem.frequencyFeedback).font(.caption).foregroundStyle(.secondary) }
+            if activityPresentation.dockedVisible && !activityPresentation.isDetached {
+                CompactModemActivity(modem:modem,presentation:activityPresentation)
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
@@ -289,7 +292,7 @@ struct ChatView: View {
                                 ChatLinkedText(text: entry.text, color: ChatPresentation.color(ChatPresentation.tone(entry), dark: colorScheme == .dark), safety: linkSafety).frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .foregroundStyle(ChatPresentation.color(ChatPresentation.tone(entry), dark: colorScheme == .dark))
-                            .padding(14).background(workspace.theme == "CP" ? Color(red:0.07,green:0.055,blue:0.16) : (colorScheme == .dark ? Color(red: 0.13, green: 0.14, blue: 0.16) : Color(red: 0.965, green: 0.97, blue: 0.98)), in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius:10).stroke(workspace.theme == "CP" ? Color.pink.opacity(0.55) : Color.clear,lineWidth:1)).id(entry.id)
+                            .padding(14).background(QSOTheme(name:workspace.theme).custom ? QSOTheme(name:workspace.theme).panel : (colorScheme == .dark ? Color(red: 0.13, green: 0.14, blue: 0.16) : Color(red: 0.965, green: 0.97, blue: 0.98)), in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius:10).stroke(QSOTheme(name:workspace.theme).custom ? QSOTheme(name:workspace.theme).outline.opacity(0.55) : Color.clear,lineWidth:1)).id(entry.id)
                         }
                     }.padding()
                 }.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
@@ -301,6 +304,9 @@ struct ChatView: View {
                         await Task.yield()
                         guard !Task.isCancelled else { return }
                         proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                    .onChange(of: activityPresentation.dockedVisible) { _ in
+                        DispatchQueue.main.async { if let last = visibleEntries.last { proxy.scrollTo(last.id,anchor:.bottom) } }
                     }
                     .onChange(of: rooms.selected) { value in
                         workspace.selectDraftRoom(value)
@@ -381,7 +387,7 @@ struct SettingsView: View {
     @State private var serialDevices = RigSettings.serialDevices
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack { Text("Station Settings").font(.largeTitle.bold()); Spacer(); Picker("Theme",selection:$workspace.theme) { Text("Default").tag("Default"); Text("CP").tag("CP") }.frame(width:220) }
+            HStack { Text("Station Settings").font(.largeTitle.bold()); Spacer(); Picker("Theme",selection:$workspace.theme) { Text("Default").tag("Default"); Text("CP").tag("CP"); Text("Crimson").tag("Crimson") }.frame(width:220) }
             HStack {
                 Stepper("RX gain: \(Int(workspace.modemSettings.rxGain)) dB",value:$workspace.modemSettings.rxGain,in:-20...20)
                 Stepper("TX gain: \(Int(workspace.modemSettings.txGain)) dB",value:$workspace.modemSettings.txGain,in:-20...20)

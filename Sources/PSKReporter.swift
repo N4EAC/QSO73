@@ -128,7 +128,7 @@ struct PSKReportQueue {
         guard !queue.reports.isEmpty, now >= queue.due else { return }
         do {
             let reports = queue.reports
-            let bytes = try PSKReportQueue.encode(receiver: own, grid: grid, software: "QSO73 0.4.17 / modem73 2.4.2", reports: reports, sequence: sequence, domain: domain, time: UInt32(now.timeIntervalSince1970))
+            let bytes = try PSKReportQueue.encode(receiver: own, grid: grid, software: "QSO73 1.1.0 / modem73 2.4.2", reports: reports, sequence: sequence, domain: domain, time: UInt32(now.timeIntervalSince1970))
             if connection == nil {
                 let c = NWConnection(host: NWEndpoint.Host(destinationHost), port: NWEndpoint.Port(rawValue: destinationPort)!, using: .udp)
                 connection = c; c.start(queue: DispatchQueue(label: "org.qso73.psk-reporter"))

@@ -1,7 +1,7 @@
 1 ICON "assets/QSO73.ico"
 1 VERSIONINFO
- FILEVERSION 0,4,13,12
- PRODUCTVERSION 0,4,13,12
+ FILEVERSION 1,1,0,0
+ PRODUCTVERSION 1,1,0,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x2L
  FILEOS 0x40004L
@@ -13,7 +13,8 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "QSO73 Windows portable test client\0"
    VALUE "ProductName", "QSO73\0"
-   VALUE "FileVersion", "0.4.13.12\0"
+   VALUE "FileVersion", "1.1.0\0"
+   VALUE "ProductVersion", "1.1.0\0"
   END
  END
  BLOCK "VarFileInfo"
@@ -22,3 +23,5 @@ BEGIN
  END
 END
 1 24 "assets/QSO73.manifest"
+
+201 RCDATA "../Assets/ContactMap.html"

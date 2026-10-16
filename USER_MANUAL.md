@@ -2,13 +2,13 @@
 
 ## Amateur-radio chat with modem73
 
-**macOS 0.4.17 / Windows 0.4.13 test 12 | modem73 2.4.2**
+**macOS 1.1.0 / Windows 1.1.0 (testing) | modem73 2.4.2**
 
 Edition: October 15, 2026
 
 QSO73 combines a chat client with a local radio modem. Use it for plain packet chat, shared channels, addressed direct conversations, station beacons and channel invitations.
 
-Chapters 1-13 describe the macOS client in version 0.4.17; the channel walkthrough applies to both clients. See page 16 for Windows test 12 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
+Chapters 1-13 describe the macOS client in version 1.1.0; the channel walkthrough applies to both clients. See page 16 for Windows 1.1.0 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
 
 ### Find what you need
 
@@ -36,6 +36,7 @@ Chapters 1-13 describe the macOS client in version 0.4.17; the channel walkthrou
 | 21 | Clearing text and RX/TX audio meters |
 | 22 | Setup tabs, audio amplification and themes |
 | 23 | Creating contacts and exporting ADIF for LoTW |
+| 24 | Saved contacts, favorites, deletion controls and offline map |
 
 **Start here:** for an HF chat trial, use ROBUST / RDM-600S with the radio's USB audio input and output selected. This is a suggested starting point, not a guaranteed link setting.
 
@@ -223,7 +224,7 @@ The bandwidth, framing and coding values in these tables follow the bundled engi
 3. Type your message and click **Send Packet**, or press **Command-Return**.
 4. Read “submitted” as handed to the modem connection, not received by another station.
 
-QST broadcasts can be received by all compatible listening stations. The To list adds callsigns as messages are received or submitted. **Clear Callsigns** empties this session list and selects QST without deleting chat history. New traffic can add callsigns again. Returning from a direct conversation to Radio Chat selects QST automatically; selecting a callsign here sends a plain packet, not a structured direct message.
+QST broadcasts can be received by all compatible listening stations. The To list adds callsigns as messages are received or submitted. **Contacts / Favorites…** opens the saved directory. Favorites appear first in the To list. **Clear contacts** removes non-favorites; Full reset also removes favorites (see page 24). New traffic can add callsigns again. Returning from a direct conversation to Radio Chat selects QST automatically; selecting a callsign here sends a plain packet, not a structured direct message.
 
 Plain Radio Chat allows up to **200 UTF-8 bytes** of text. Bytes are not always characters: accented text and emoji can use multiple bytes. The counter helps you stay within the limit.
 
@@ -333,7 +334,7 @@ These are two separate functions. Both use the same selected modem transmit mode
 
 Enable **Beacon** in Radio Chat and select **Interval**, or configure it in Station Settings. The selectable range is **1-60 minutes**. A valid 4-, 6- or 8-character Maidenhead grid is required.
 
-Example for this release: `BEACON N4EAC FM18FW QSO73 v0.4.17`
+Example for this release: `BEACON N4EAC FM18FW QSO73 v1.1.0`
 
 It broadcasts to QST without changing your selected conversation or draft. **Beacon Now** requests a beacon while enabled and connected; a busy modem defers the request. The first automatic beacon follows one full interval after connection or configuration.
 
@@ -360,9 +361,9 @@ Automatic packets wait for ready audio, idle modem status and an empty TX queue.
 
 **Decoding indicator:** Beside RX/TX (macOS) or frequency (Windows), green means a frame is being decoded; gray means inactive. A successful message is not guaranteed. Requires the current bundled engine.
 
-Open **Modem Activity** from the sidebar for the full dashboard. To watch activity while chatting, use **Dock with Chat**, or **Undock** it into a separate window. The same modem session serves both views.
+Open **Modem Activity** from the sidebar for the full dashboard. To watch activity while chatting, use **Dock with Chat** for a compact two-line summary inside Chat, or **Undock** for the full dashboard in a separate window. The same modem session serves both views.
 
-In the detached window, **Keep on Top** keeps the dashboard above other windows. **Dock** returns it below Radio Chat. In the docked panel, **Hide** closes the panel view without stopping the modem.
+In the detached window, **Keep on Top** keeps the dashboard above other windows. **Dock** returns it as the compact Chat summary. **Full / Undock** reopens the full dashboard. In the docked panel, **Hide** closes the panel view without stopping the modem.
 
 | Indicator | What it tells you |
 | --- | --- |
@@ -474,7 +475,7 @@ Use **Modem events** in Radio Chat when diagnosing startup, device routing or co
 
 ### Basis of this manual
 
-Application behavior was checked against QSO73 0.4.17 macOS source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
+Application behavior was checked against QSO73 1.1.0 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
 
 Engine source: https://github.com/RFnexus/modem73/tree/3a37c290a5330bd95f4f283feafc5ba5605bdc52
 
@@ -517,7 +518,7 @@ All rooms share one radio frequency and transmit queue. Private chat is addresse
 
 # 15. Windows portable testing build
 
-The Windows companion is **0.4.13 test 12**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Test 12 adds Setup/Contact Log tabs, audio gain and themes, and fixes Stop Modem closing the client. Windows hardware verification remains pending.
+The Windows companion is **1.1.0 (testing)**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Version 1.1.0 includes Setup/Contact Log tabs, audio gain and themes, and fixes Stop Modem closing the client. Windows hardware verification remains pending.
 
 ### Extract and configure
 
@@ -711,7 +712,7 @@ A changing RX meter confirms incoming audio activity, not a successfully decoded
 
 ## Windows Setup tab
 
-Windows has three separate pages: **Chat**, **Setup** and **Contact Log**. Setup contains callsign/grid, radio input/output devices, modem mode, PTT method, bundled Hamlib model/COM/baud, macros, gain and theme choices. Configure and Save settings before Start Modem. Device and CAT changes require stopping the modem; the gain and theme controls remain available while it is running.
+Windows has four pages: **Chat**, **Setup**, **Contact Log** and **Contacts**. Setup contains callsign/grid, radio input/output devices, modem mode, PTT method, bundled Hamlib model/COM/baud, macros, gain and theme choices. Configure and Save settings before Start Modem. Device and CAT changes require stopping the modem; the gain and theme controls remain available while it is running.
 
 Start/Stop is always at the top. Stop Modem shuts down QSO73's modem and Hamlib processes and releases PTT; QSO73 remains open. You can change settings and start it again in the same window. The radio-frequency controls occupy their own labeled group, separately from To / QST, in both clients.
 
@@ -731,9 +732,9 @@ RX gain acts before decoding and is reflected in the RX audio VU. TX gain multip
 
 Start at 0 dB. Increase gain only as needed and watch peak markers. Full-scale audio is limited to −1…+1; excess gain causes clipping and can impair decoding. RX gain also amplifies noise and does not improve signal-to-noise ratio. Check the radio's own ALC and use modest RF power during an agreed test.
 
-## Default and CP themes
+## Default, CP and Crimson themes
 
-Choose **Default** or **CP** in Station Settings on macOS, or Setup on Windows. CP means Cyberpunk: a dark purple/navy interface with cyan and magenta accents. Default restores the normal platform presentation. Themes apply immediately and are saved between launches. They do not restart the modem or change radio settings. Message categories keep their blue/orange/green identities with colors suited to the background.
+Choose **Default**, **CP** or **Crimson** in Station Settings on macOS, or Setup on Windows. CP uses dark purple/navy with cyan and magenta accents. Crimson uses deep burgundy with rose/red accents. Default restores the normal platform presentation. Themes apply immediately and are saved between launches. They do not restart the modem or change radio settings. Message categories keep their blue/orange/green identities with colors suited to the background.
 
 <!-- page -->
 
@@ -759,3 +760,36 @@ Open the exported .adi file in ARRL's TQSL and use **Sign a log and upload it au
 Contacts persist separately from chat: macOS saves them in its QSO73 preferences; Windows saves contacts.json beside QSO73.exe. Keep that file/settings.json when replacing a portable Windows folder. Personal contact data is excluded from distributed ZIPs. An unreadable saved log is preserved and editing is blocked, rather than silently overwriting it.
 
 Sources: https://www.adif.org/316/ADIF_316.htm and https://lotw.arrl.org/lotw-help/submitting-qsos/
+
+<!-- page -->
+
+# 23. Contacts, favorites and offline map
+
+## Remember stations between sessions
+
+QSO73 1.1.0 keeps received callsigns, last-heard times and known grids across launches on both platforms. It also remembers manually added destinations. On macOS open **Contacts & Favorites** in the sidebar, or **Contacts / Favorites…** beside To. On Windows open **Contacts**. This directory is separate from the completed-QSO ADIF Contact Log.
+
+Select a row to edit its Maidenhead grid or favorite status. macOS: tick **Favorite**, then **Save**. Windows: **Favorite / Unfavorite** toggles the selected station; **Save grid** saves its grid. Favorites appear in their own list and first in the To menu. **Use callsign** returns to Radio Chat and selects that destination; it does not transmit.
+
+Grids are learned from a station's beacon or PING reply. A received callsign alone does not reveal a location. Enter a verified 4, 6 or 8-character grid manually if needed; a blank grid means unknown.
+
+## Clear, delete and reset
+
+| Control | Result |
+| --- | --- |
+| Clear contacts | Removes non-favorite directory entries; preserves favorites |
+| Delete selected / Delete | Erases the selected contact, including its favorite status |
+| Favorite / Unfavorite | Changes favorite membership; keeps the contact |
+| Full reset | Erases all directory entries, including every favorite |
+
+Clear, individual deletion and Full reset require confirmation. New radio traffic can add an erased callsign again. These controls do not erase completed QSOs in Contact Log or the chat transcript. Use the separate chat Clear control for messages.
+
+## Contact Map
+
+Click **Contact Map** to open a free, interactive offline world map in your default browser. The current Default, CP or Crimson theme is applied when it opens. Callsign labels and pins use Maidenhead grid centers, which are approximate rather than street addresses. Contacts without a grid stay listed without a pin.
+
+Drag to pan; use **+ / −** to zoom and **World** to reset. Click a mapped callsign in the list to center it. Stars identify favorites. Stations sharing a grid may share a pin position; the list keeps each callsign accessible. Reopen Contact Map after directory or theme changes to refresh the snapshot.
+
+No map account, API key, online lookup or tile download is required. Country outlines are bundled public-domain Natural Earth data. The generated HTML stays local and contains the retained directory, so treat that file as personal station data when sharing it.
+
+macOS saves the directory in QSO73 preferences. Windows saves **station-directory.json** beside QSO73.exe; preserve it along with settings.json and contacts.json when replacing the portable folder. User data is excluded from release packages. An unreadable directory is preserved until an explicit Full reset.

@@ -27,3 +27,7 @@ for file in package.rglob('*'):
     count+=1
 print(f'PASS: {count} Windows x64 executables/DLLs have complete adjacent/system dependency closure')
 print('PASS: complete corresponding Hamlib/libusb source archives included')
+
+assert b'<title>QSO73 Contact Map</title>' in (package/'QSO73.exe').read_bytes(), 'Offline map resource missing'
+assert (package/'docs/QSO73-User-Manual.pdf').is_file()
+print('PASS: embedded offline map and bundled PDF manual present')

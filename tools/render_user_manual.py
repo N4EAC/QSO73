@@ -31,7 +31,7 @@ def inline(s):
 def para(s,sty='BodyManual'):
     style=styles[sty]
     if number in (2,10,15) and sty=='BodyManual': style=ParagraphStyle(name='compact',parent=style,fontSize=9.7,leading=12.4,spaceAfter=5)
-    if number == 10 and sty=='BodyManual': style=ParagraphStyle(name='activity-compact',parent=style,fontSize=9.5,leading=12,spaceAfter=4)
+    if number == 10 and sty=='BodyManual': style=ParagraphStyle(name='activity-compact',parent=style,fontSize=9.2,leading=11.4,spaceAfter=3)
     return Paragraph(inline(s),style)
 story=[]
 sections=(root/'USER_MANUAL.md').read_text().split('<!-- page -->')
@@ -55,7 +55,7 @@ for number,section in enumerate(sections):
             elif number==9 and count==3: widths=[130,292,94]
             elif number==10 and count==2: widths=[147,369]
             table=Table([[para(cell,'TableHeadManual' if r==0 else 'TableManual') for cell in row] for r,row in enumerate(rows)],colWidths=widths,repeatRows=1,hAlign='LEFT')
-            table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),navy),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.HexColor('#EDF5F6'),colors.white]),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),8),('RIGHTPADDING',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),1.5 if number==0 else 4),('BOTTOMPADDING',(0,0),(-1,-1),1.5 if number==0 else 4),('LINEBELOW',(0,-1),(-1,-1),0.5,colors.HexColor('#C8DADF'))]))
+            table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),navy),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.HexColor('#EDF5F6'),colors.white]),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),8),('RIGHTPADDING',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),1.5 if number==0 else 3 if number==10 else 4),('BOTTOMPADDING',(0,0),(-1,-1),1.5 if number==0 else 3 if number==10 else 4),('LINEBELOW',(0,-1),(-1,-1),0.5,colors.HexColor('#C8DADF'))]))
             story += [table,Spacer(1,9)]
             continue
         if line.startswith('# '):
@@ -81,12 +81,12 @@ def decoration(canvas,doc):
     canvas.setFont('Helvetica-Bold',8);canvas.setFillColor(navy)
     canvas.drawString(48,h-28,'QSO73  /  USER MANUAL')
     canvas.setFont('Helvetica',8);canvas.setFillColor(colors.HexColor('#627581'))
-    canvas.drawRightString(w-48,h-28,'Version 0.4.17')
+    canvas.drawRightString(w-48,h-28,'Version 1.1.0')
     canvas.setStrokeColor(colors.HexColor('#D4E1E5'));canvas.setLineWidth(.5);canvas.line(48,40,w-48,40)
     canvas.drawString(48,27,'October 15, 2026  |  macOS / Windows')
     canvas.drawRightString(w-48,27,str(doc.page))
     canvas.restoreState()
 
-doc=SimpleDocTemplate(str(output),pagesize=letter,leftMargin=48,rightMargin=48,topMargin=56,bottomMargin=53,title='QSO73 User Manual - Version 0.4.17',author='QSO73',subject='Radio setup, channels, direct chat and modem mode selection')
+doc=SimpleDocTemplate(str(output),pagesize=letter,leftMargin=48,rightMargin=48,topMargin=56,bottomMargin=53,title='QSO73 User Manual - Version 1.1.0',author='QSO73',subject='Radio setup, channels, direct chat and modem mode selection')
 doc.build(story,onFirstPage=decoration,onLaterPages=decoration)
 print(output)

@@ -4,6 +4,7 @@ struct RecipientControls: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var callsigns: CallsignList
     @State private var showAdd = false
+    @State private var showDirectory = false
     @State private var newCall = ""
     @State private var error = ""
     private var options: [String] {
@@ -16,9 +17,13 @@ struct RecipientControls: View {
                 ForEach(options, id: \.self) { call in Text(call == "QST" ? "QST · Broadcast" : call).tag(call) }
             }.frame(width: 180)
             Button("Add Callsign…") { newCall = ""; error = ""; showAdd = true }
-            Button("Clear Callsigns") { callsigns.clear(); workspace.chatTarget = "QST" }
-                .disabled(callsigns.callsigns.isEmpty)
-                .help("Clears this session's destination list and selects QST. Chat history and direct conversations are kept. New traffic can add callsigns again.")
+            Button("Contacts / Favorites…") { showDirectory = true }
+
+        }
+        .onAppear { validateTarget() }
+        .onChange(of: callsigns.callsigns) { _ in validateTarget() }
+        .sheet(isPresented: $showDirectory) {
+            StationDirectoryView(directory: callsigns, theme: workspace.theme) { call in workspace.chatTarget = call }.frame(width:760,height:520)
         }
         .sheet(isPresented: $showAdd) {
             VStack(alignment: .leading, spacing: 14) {
@@ -37,4 +42,8 @@ struct RecipientControls: View {
             }.padding(24).frame(width: 360)
         }
     }
+    private func validateTarget() {
+        if workspace.chatTarget != "QST" && !callsigns.callsigns.contains(workspace.chatTarget) { workspace.chatTarget = "QST" }
+    }
+
 }

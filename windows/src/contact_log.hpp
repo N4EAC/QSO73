@@ -150,7 +150,7 @@ struct Contact {
   static std::string exportADIF(const std::vector<Contact> &contacts) {
     std::string s = "QSO73 contact "
                     "export\n<ADIF_VER:5>3.1.6<PROGRAMID:5>QSO73<"
-                    "PROGRAMVERSION:6>0.4.13<EOH>\n";
+                    "PROGRAMVERSION:5>1.1.0<EOH>\n";
     for (auto &c : contacts)
       s += c.adif();
     return s;

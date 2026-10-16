@@ -14,6 +14,7 @@
 #include "audio_vu.hpp"
 #include "chat_presentation.hpp"
 #include "contact_log.hpp"
+#include "station_directory.hpp"
 #include "dashboard.hpp"
 #include "heard_query.hpp"
 #include "link_transport.hpp"
@@ -33,7 +34,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"0.4.13 Windows test 12";
+constexpr const wchar_t *VERSION = L"1.1.0 Windows (testing)";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -96,7 +97,7 @@ enum SettingID {
   CATBAUD,
   RXGAIN,
   TXGAIN,
-  THEME
+  THEME, DIRECTORYLIST, FAVORITELIST, DIRECTORYGRID, DIRSAVE, DIRFAVORITE, DIRDELETE, DIRCLEAR, DIRRESET, DIRMAP, DIRUSE
 };
 HWND win, history, composer, statusLabel, topicLabel, frequencyLabel,
     decodingLabel, reportingLabel, beaconCountdownLabel, linkSafetyLabel;
@@ -114,6 +115,7 @@ void changePage(int page);
 void contactEditor(bool edit);
 void exportADIF();
 void applyTheme();
+LRESULT CALLBACK proc(HWND,UINT,WPARAM,LPARAM);
 AudioLevels audioLevels;
 LinkCheckWorker linkChecks;
 uint64_t linkRequestId = 0;
@@ -131,6 +133,15 @@ std::wstring base;
 Rooms rooms;
 std::map<std::string, std::string> drafts;
 std::set<std::string> contacts;
+StationDirectory stationDirectory;
+std::string directoryError, directorySelection;
+std::vector<std::string> directoryRows, favoriteRows;
+HWND directoryList, favoriteList, directoryCall, directoryFooter;
+void loadDirectory();
+void saveDirectory();
+void refreshDirectory();
+void rememberStation(const std::string &,const std::string &wire={},bool received=false);
+void openContactMap();
 struct Settings {
   std::string call, grid, input, output, family = "robust", mode = "RDM-600S",
                                          ptt = "rigctl", rigHost = "127.0.0.1",
@@ -142,6 +153,9 @@ struct Settings {
   bool autoPing = false, pskReporter = false, autoHeard = false;
 };
 Settings settings;
+bool isCustomTheme(){return settings.theme=="CP" || settings.theme=="Crimson";}
+COLORREF themeColor(COLORREF cp,COLORREF crimson){return settings.theme=="Crimson"?crimson:cp;}
+
 PingSession ping;
 HeardBook heardBook;
 HeardSession heard;
@@ -345,7 +359,7 @@ void loadSettings() {
   std::string s((std::istreambuf_iterator<char>(f)), {});
   try {
     Json j(s);
-    settings.theme = j.str("theme") == "CP" ? "CP" : "Default";
+    settings.theme = j.str("theme") == "CP" || j.str("theme") == "Crimson" ? j.str("theme") : "Default";
     settings.rxGain = int(std::clamp(j.num("rxGain"), -20.0, 20.0));
     settings.txGain = int(std::clamp(j.num("txGain"), -20.0, 20.0));
     settings.autoPing = j.yes("autoPing");
@@ -1032,7 +1046,7 @@ void showHistory() {
       format.dwMask = CFM_COLOR | CFM_LINK | CFM_UNDERLINE;
       format.dwEffects = 0;
       auto tone = chatTone(e);
-      auto rgb = chatRGB(tone, settings.theme == "CP");
+      auto rgb = chatRGB(tone, isCustomTheme());
       format.crTextColor = RGB(rgb.red, rgb.green, rgb.blue);
       SendMessageW(history, EM_SETCHARFORMAT, SCF_SELECTION,
                    reinterpret_cast<LPARAM>(&format));
@@ -1099,7 +1113,8 @@ void rebuildRooms() {
   EnableWindow(controls[USERS], rooms.selected[0] == '#');
   EnableWindow(controls[ANNOUNCE], rooms.joined.count(rooms.selected));
   std::vector<std::string> to{"QST"};
-  to.insert(to.end(), contacts.begin(), contacts.end());
+  for(auto &c:stationDirectory.records)if(c.second.favorite)to.push_back(c.first);
+  for(auto &c:contacts)if(!stationDirectory.records.at(c).favorite)to.push_back(c);
   comboSet(TO, to, value(TO).empty() ? "QST" : value(TO));
   SendMessageW(controls[ANNOUNCE], BM_SETCHECK,
                announceOn && announceRoom == rooms.selected ? BST_CHECKED
@@ -1144,7 +1159,7 @@ void sendMessage() {
     auto to = call(value(TO));
     enqueue({settings.call, to, message});
     if (to != "QST")
-      contacts.insert(to);
+      rememberStation(to);
   } else {
     if (rooms.selected[0] == '#' && !rooms.joined.count(rooms.selected))
       throw std::runtime_error(
@@ -1187,6 +1202,7 @@ struct PromptState {
   bool done = false, accepted = false;
 };
 LRESULT CALLBACK promptProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+  if(isCustomTheme() && (m==WM_ERASEBKGND || m==WM_CTLCOLORSTATIC || m==WM_CTLCOLOREDIT || m==WM_CTLCOLORBTN || (m==WM_DRAWITEM && reinterpret_cast<DRAWITEMSTRUCT*>(l)->CtlType==ODT_BUTTON)))return proc(h,m,w,l);
   auto state = (PromptState *)GetWindowLongPtrW(h, GWLP_USERDATA);
   if (m == WM_NCCREATE) {
     auto cs = (CREATESTRUCTW *)l;
@@ -1223,6 +1239,7 @@ bool prompt(const std::wstring &title, const std::wstring &instruction,
                            170, win, nullptr, wc.hInstance, &s);
   auto make = [&](const wchar_t *cls, const wchar_t *txt, int id, int x, int y,
                   int width, DWORD style) {
+    if(isCustomTheme() && wcscmp(cls,L"BUTTON")==0)style=(style&~BS_TYPEMASK)|BS_OWNERDRAW;
     auto child =
         CreateWindowExW(wcscmp(cls, L"EDIT") == 0 ? WS_EX_CLIENTEDGE : 0, cls,
                         txt, WS_CHILD | WS_VISIBLE | style, x, y, width, 27, h,
@@ -1368,7 +1385,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v0.4.13-win-test12",
+                 " QSO73 v1.1.0",
              true});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
@@ -1394,7 +1411,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 Windows test 12 - ") +
+  std::string s = std::string("QSO73 1.1.0 Windows (testing) - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1521,6 +1538,7 @@ void exportChat() {
   }
 }
 #include "ui_extras.hpp"
+#include "directory_ui.hpp"
 void pollUI() {
   std::deque<Event> pending;
   {
@@ -1532,6 +1550,7 @@ void pollUI() {
     try {
       if (e.kind == "packet" || e.kind == "sent") {
         bool sent = e.kind == "sent";
+        if (!sent) rememberStation(e.packet.source, e.packet.text, true);
         if (!sent)
           heardBook.observe(e.packet.source, {}, epoch(), epoch(), true);
         if (e.packet.text.rfind(HeardMessage::prefix, 0) == 0) {
@@ -1553,9 +1572,7 @@ void pollUI() {
         }
         if (rooms.route(e.packet, settings.call, sent, now()))
           changed = true;
-        if (!sent && e.packet.source != settings.call &&
-            station(e.packet.source) && contacts.size() < 200)
-          contacts.insert(e.packet.source);
+
       } else if (e.kind == "status") {
         Json j(e.data);
         rawStatus = e.data;
@@ -1727,7 +1744,7 @@ void pollUI() {
       pskBatch = pskReports.reports;
       try {
         auto bytes = PSKReportQueue::encode(
-            settings.call, settings.grid, "QSO73 0.4.13 / modem73 2.4.2",
+            settings.call, settings.grid, "QSO73 1.1.0 / modem73 2.4.2",
             pskBatch, pskSequence, pskDomain, uint32_t(epoch()));
         pskSending = true;
         pskStatus = "PSK: submitting via Internet";
@@ -1821,6 +1838,10 @@ void layout(int w, int h) {
   int left = 20, right = w - left - 15;
   MoveWindow(pages, 5, 4, std::max(500, w - 170), 30, TRUE);
   MoveWindow(controls[START], w - 155, 5, 140, 27, TRUE);
+  MoveWindow(directoryFooter,20,h-70,w-40,24,TRUE);
+  int directoryWidth=(w-60)/2;
+  MoveWindow(directoryList,20,220,directoryWidth,std::max(100,h-310),TRUE);
+  MoveWindow(favoriteList,40+directoryWidth,220,directoryWidth,std::max(100,h-310),TRUE);
   MoveWindow(contactList, 20, 190, w - 40, std::max(100, h - 250), TRUE);
   MoveWindow(history, left, 268, right, h - 445, TRUE);
   MoveWindow(rxVULabel, left, 226, (right - 16) / 2, 32, TRUE);
@@ -1856,7 +1877,7 @@ void layout(int w, int h) {
 // keyboard navigation and accessibility through the common-control subclass.
 LRESULT CALLBACK tabThemeProc(HWND tab, UINT message, WPARAM w, LPARAM l,
                               UINT_PTR, DWORD_PTR) {
-  if (settings.theme == "CP" &&
+  if (isCustomTheme() &&
       (message == WM_PAINT || message == WM_PRINTCLIENT ||
        message == WM_ERASEBKGND)) {
     PAINTSTRUCT paint{};
@@ -1864,7 +1885,7 @@ LRESULT CALLBACK tabThemeProc(HWND tab, UINT message, WPARAM w, LPARAM l,
                                 : reinterpret_cast<HDC>(w);
     RECT bounds;
     GetClientRect(tab, &bounds);
-    auto background = CreateSolidBrush(RGB(10, 7, 24));
+    auto background = CreateSolidBrush(themeColor(RGB(10, 7, 24), RGB(24, 7, 13)));
     FillRect(dc, &bounds, background);
     DeleteObject(background);
     if (message != WM_ERASEBKGND) {
@@ -1898,14 +1919,14 @@ void makeUI() {
   pages = child(WC_TABCONTROLW, L"", PAGES, 5, 4, 900, 30,
                 TCS_OWNERDRAWFIXED | WS_TABSTOP);
   SetWindowSubclass(pages, tabThemeProc, 1, 0);
-  for (auto title : {L"Chat", L"Setup", L"Contact Log"}) {
+  for (auto title : {L"Chat", L"Setup", L"Contact Log", L"Contacts"}) {
     TCITEMW item{};
     item.mask = TCIF_TEXT;
     item.pszText = const_cast<wchar_t *>(title);
     TabCtrl_InsertItem(pages, TabCtrl_GetItemCount(pages), &item);
   }
   creatingPage = 1;
-  label(L"QSO73 Windows test 12", 15, 14, 275);
+  label(L"QSO73 1.1.0 Windows (testing)", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104, 75);
@@ -1952,7 +1973,7 @@ void makeUI() {
   label(L"TX gain multiplies TX audio %. Watch RX/TX peak meters.", 330, 235,
         650);
   label(L"Theme", 330, 283, 100);
-  combo(THEME, 330, 308, 280, {"Default", "CP"}, settings.theme);
+  combo(THEME, 330, 308, 280, {"Default", "CP", "Crimson"}, settings.theme);
   label(L"Theme changes apply immediately.", 330, 347, 650);
   label(L"Configure the radio here; chat and audio meters are on Chat.", 330,
         408, 650);
@@ -2029,7 +2050,25 @@ void makeUI() {
         20, 96, 950);
   contactList = child(L"LISTBOX", L"", CONTACTLIST, 20, 148, 960, 570,
                       WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY);
+  creatingPage = 3;
+  label(L"Contacts & Favorites",20,14,900);
+  label(L"Saved received callsigns. Clear contacts keeps favorites. Full reset erases this directory, including favorites.",20,43,960);
+  button(DIRMAP,L"Contact Map",20,74,145);
+  button(DIRCLEAR,L"Clear contacts...",180,74,155);
+  button(DIRRESET,L"Full reset...",350,74,140);
+  directoryCall = child(L"STATIC",L"Select a contact",0,20,116,155,24);
+  edit(DIRECTORYGRID,180,110,110,"");
+  button(DIRSAVE,L"Save grid",300,110,100);
+  button(DIRFAVORITE,L"Favorite / Unfavorite",410,110,180);
+  button(DIRDELETE,L"Delete...",600,110,100);
+  button(DIRUSE,L"Use callsign",710,110,125);
+  label(L"Contacts (callsign / grid / last heard UTC)",20,152,470);
+  label(L"Favorites (individual delete available above)",530,152,470);
+  directoryList = child(L"LISTBOX",L"",DIRECTORYLIST,20,178,480,500,WS_VSCROLL|WS_TABSTOP|LBS_NOTIFY);
+  favoriteList = child(L"LISTBOX",L"",FAVORITELIST,530,178,480,500,WS_VSCROLL|WS_TABSTOP|LBS_NOTIFY);
+  directoryFooter = child(L"STATIC",L"Grid centers are approximate. Unknown locations remain listed without a pin. ADIF Contact Log is separate.",0,20,698,960,24);
   creatingPage = -1;
+  refreshDirectory();
   changePage(0);
   applyTheme();
   rebuildRooms();
@@ -2039,27 +2078,27 @@ void makeUI() {
 LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
   if (m == WM_DRAWITEM &&
       (reinterpret_cast<DRAWITEMSTRUCT *>(l)->CtlType == ODT_TAB ||
-       (settings.theme == "CP" &&
+       (isCustomTheme() &&
         reinterpret_cast<DRAWITEMSTRUCT *>(l)->CtlType == ODT_BUTTON))) {
     auto draw = reinterpret_cast<DRAWITEMSTRUCT *>(l);
-    bool cp = settings.theme == "CP";
+    bool cp = isCustomTheme();
     auto brush =
-        CreateSolidBrush(cp ? RGB(30, 17, 57) : GetSysColor(COLOR_BTNFACE));
+        CreateSolidBrush(cp ? themeColor(RGB(30, 17, 57), RGB(65, 20, 32)) : GetSysColor(COLOR_BTNFACE));
     FillRect(draw->hDC, &draw->rcItem, brush);
     DeleteObject(brush);
     brush =
-        CreateSolidBrush(cp ? RGB(236, 61, 205) : GetSysColor(COLOR_3DSHADOW));
+        CreateSolidBrush(cp ? themeColor(RGB(236, 61, 205), RGB(235, 57, 87)) : GetSysColor(COLOR_3DSHADOW));
     FrameRect(draw->hDC, &draw->rcItem, brush);
     DeleteObject(brush);
     SetBkMode(draw->hDC, TRANSPARENT);
     SetTextColor(draw->hDC, draw->itemState & ODS_DISABLED ? RGB(130, 130, 145)
-                            : cp                           ? RGB(99, 240, 245)
+                            : cp                           ? themeColor(RGB(99, 240, 245), RGB(255, 172, 184))
                                  : GetSysColor(COLOR_BTNTEXT));
     SelectObject(draw->hDC, font);
     std::wstring caption;
     if (draw->CtlType == ODT_TAB) {
-      const wchar_t *titles[] = {L"Chat", L"Setup", L"Contact Log"};
-      if (draw->itemID < 3)
+      const wchar_t *titles[] = {L"Chat", L"Setup", L"Contact Log", L"Contacts"};
+      if (draw->itemID < 4)
         caption = titles[draw->itemID];
     } else
       caption = wide(text(draw->hwndItem));
@@ -2068,7 +2107,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (draw->CtlType == ODT_TAB && int(draw->itemID) == selectedPage) {
       RECT marker = draw->rcItem;
       marker.top = marker.bottom - 3;
-      auto accent = CreateSolidBrush(cp ? RGB(99, 240, 245) : RGB(0, 100, 200));
+      auto accent = CreateSolidBrush(cp ? themeColor(RGB(99, 240, 245), RGB(255, 172, 184)) : RGB(0, 100, 200));
       FillRect(draw->hDC, &marker, accent);
       DeleteObject(accent);
     }
@@ -2082,13 +2121,13 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
       bool tx = draw->hwndItem == txVULabel;
       auto reading = audioLevels.reading(tx, connected && audioReady, now());
       auto background =
-          CreateSolidBrush(settings.theme == "CP" ? RGB(18, 12, 38)
+          CreateSolidBrush(isCustomTheme() ? themeColor(RGB(18, 12, 38), RGB(44, 14, 24))
                                                   : GetSysColor(COLOR_BTNFACE));
       FillRect(draw->hDC, &draw->rcItem, background);
       DeleteObject(background);
       SetBkMode(draw->hDC, TRANSPARENT);
-      SetTextColor(draw->hDC, settings.theme == "CP"
-                                  ? RGB(99, 240, 245)
+      SetTextColor(draw->hDC, isCustomTheme()
+                                  ? themeColor(RGB(99, 240, 245), RGB(255, 172, 184))
                                   : GetSysColor(COLOR_BTNTEXT));
       SelectObject(draw->hDC, font);
       std::string label = tx ? "TX audio" : "RX audio";
@@ -2125,7 +2164,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         RECT marker{bar.left + peak, bar.top - 1, bar.left + peak + 2,
                     bar.bottom + 1};
         auto brush = CreateSolidBrush(reading->peak >= -3 ? RGB(215, 45, 45)
-                                      : settings.theme == "CP"
+                                      : isCustomTheme()
                                           ? RGB(230, 230, 245)
                                           : GetSysColor(COLOR_BTNTEXT));
         FillRect(draw->hDC, &marker, brush);
@@ -2152,19 +2191,21 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     SelectObject(item->hDC, old);
     return TRUE;
   }
-  if (settings.theme == "CP" &&
+  if (isCustomTheme() &&
       (m == WM_CTLCOLORSTATIC || m == WM_CTLCOLOREDIT ||
        m == WM_CTLCOLORLISTBOX || m == WM_CTLCOLORBTN)) {
     auto dc = reinterpret_cast<HDC>(w);
-    SetTextColor(dc, RGB(99, 240, 245));
-    SetBkColor(dc, RGB(18, 12, 38));
-    static HBRUSH brush = CreateSolidBrush(RGB(18, 12, 38));
+    SetTextColor(dc, themeColor(RGB(99, 240, 245), RGB(255, 172, 184)));
+    SetBkColor(dc, themeColor(RGB(18, 12, 38), RGB(44, 14, 24)));
+    static HBRUSH cpBrush = CreateSolidBrush(RGB(18, 12, 38));
+    static HBRUSH crimsonBrush = CreateSolidBrush(RGB(44, 14, 24));
+    HBRUSH brush = settings.theme == "Crimson" ? crimsonBrush : cpBrush;
     return reinterpret_cast<LRESULT>(brush);
   }
-  if (m == WM_ERASEBKGND && settings.theme == "CP") {
+  if (m == WM_ERASEBKGND && isCustomTheme()) {
     RECT r;
     GetClientRect(h, &r);
-    auto brush = CreateSolidBrush(RGB(10, 7, 24));
+    auto brush = CreateSolidBrush(themeColor(RGB(10, 7, 24), RGB(24, 7, 13)));
     FillRect(reinterpret_cast<HDC>(w), &r, brush);
     DeleteObject(brush);
     return 1;
@@ -2229,6 +2270,18 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return 0;
   }
   if (m == WM_COMMAND) {
+    if ((LOWORD(w)==DIRECTORYLIST || LOWORD(w)==FAVORITELIST) && HIWORD(w)==LBN_SELCHANGE) {
+      auto list=LOWORD(w)==DIRECTORYLIST?directoryList:favoriteList;
+      auto &rows=LOWORD(w)==DIRECTORYLIST?directoryRows:favoriteRows;
+      auto index=SendMessageW(list,LB_GETCURSEL,0,0);
+      if(index>=0 && size_t(index)<rows.size()) {
+        directorySelection=rows[size_t(index)];
+        SetWindowTextW(directoryCall,wide(directorySelection).c_str());
+        SetWindowTextW(controls[DIRECTORYGRID],wide(stationDirectory.records.at(directorySelection).grid).c_str());
+      }
+      return 0;
+    }
+
     int id = LOWORD(w);
     try {
       if (id == BEACONMIN && HIWORD(w) == EN_CHANGE && beaconOn) {
@@ -2240,7 +2293,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
       }
       if (HIWORD(w) == CBN_SELCHANGE) {
         if (id == THEME) {
-          settings.theme = value(THEME) == "CP" ? "CP" : "Default";
+          settings.theme = value(THEME);
           saveSettings();
           applyTheme();
         } else if (id == ROOMS) {
@@ -2297,6 +2350,15 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         else
           start();
         break;
+      case DIRMAP: openContactMap(); break;
+      case DIRUSE:
+        if(!directorySelection.empty()){selectRoom("radio");put(controls[TO],directorySelection);changePage(0);} break;
+      case DIRSAVE:
+      case DIRFAVORITE:
+      case DIRDELETE:
+      case DIRCLEAR:
+      case DIRRESET:
+        directoryCommand(id); break;
       case SAVE:
         readSettings();
         notify("Portable settings saved.");
@@ -2513,6 +2575,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
   base = base.substr(0, base.find_last_of(L"\\/") + 1);
   loadSettings();
   loadContacts();
+  loadDirectory();
   job = CreateJobObjectW(nullptr, nullptr);
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
   limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;

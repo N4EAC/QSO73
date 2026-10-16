@@ -14,3 +14,5 @@ The headless modem build links the vendored PDCurses sources; their public-domai
 
 
 Hamlib 4.7.2 is bundled from the official Windows x64 release, unchanged: https://github.com/Hamlib/Hamlib/releases/tag/4.7.2 . Hamlib's library is LGPL v2.1 or later and its utilities (including rigctld/rigctl) are GPL v2 or later. Original LICENSE.txt, COPYING.txt and COPYING.LIB.txt and documentation remain in hamlib/. Complete corresponding Hamlib source is in hamlib/source/hamlib-4.7.2.tar.gz. The Hamlib package includes libusb-1.0.dll (1.0.24.11584), LGPL v2.1 or later; corresponding libusb 1.0.24 source and notices are in hamlib/source/libusb-1.0.24.tar.bz2. Adjacent libgcc and winpthread runtime DLLs are from the unchanged upstream Windows package; compiler runtime notices are also retained in licenses/.
+
+Offline contact map: Natural Earth public-domain country outlines. https://www.naturalearthdata.com/about/terms-of-use/ . No online tile service is used.

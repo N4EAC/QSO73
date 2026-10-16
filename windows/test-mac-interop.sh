@@ -60,3 +60,6 @@ build/contact-log-tests
 cmp /tmp/qso73-contact-mac.adi /tmp/qso73-contact-windows.adi
 
 python3 Tests/check_adif.py
+
+clang++ -std=c++17 -O2 -Iwindows/src -Iwindows/vendor/modem73-win/deps windows/tests/station_directory_test.cpp windows/build/cJSON-native.o -o windows/build/station-directory-tests
+windows/build/station-directory-tests
