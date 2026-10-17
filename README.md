@@ -1,20 +1,27 @@
 # QSO73
 
-[![macOS](https://img.shields.io/badge/macOS-13%2B%20%C2%B7%20Apple%20Silicon-007AFF?logo=apple&logoColor=white)](https://github.com/N4EAC/QSO73/releases/tag/v1.1.0)
-[![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64%20%C2%B7%20TESTING-orange)](https://github.com/N4EAC/QSO73/releases/tag/v1.1.0)
+[![macOS](https://img.shields.io/badge/macOS-13%2B%20%C2%B7%20Apple%20Silicon-007AFF?logo=apple&logoColor=white)](https://github.com/N4EAC/QSO73/releases/tag/v1.1.1)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64%20%C2%B7%20TESTING-orange)](https://github.com/N4EAC/QSO73/releases/tag/v1.1.1)
 
 QSO73 is an amateur-radio chat client using the bundled modem73 engine. It provides broadcast packet chat, channels and topics, direct conversations, beacons, PING/SNR replies, Heard queries and optional PSK Reporter reception reporting.
 
-## Download version 1.1.0
+## Download version 1.1.1
 
-Both platforms are published in the **[same 1.1.0 release](https://github.com/N4EAC/QSO73/releases/tag/v1.1.0)**.
+Both platforms are published in the **[same 1.1.1 release](https://github.com/N4EAC/QSO73/releases/tag/v1.1.1)**.
 
 | Platform | Download | Status |
 | --- | --- | --- |
-| macOS 13+, Apple Silicon | [QSO73 1.1.0 DMG](https://github.com/N4EAC/QSO73/releases/download/v1.1.0/QSO73-1.1.0-macOS-arm64.dmg) | Development build, ad-hoc signed |
-| Windows 10 (1903+) / Windows 11, x64 | [QSO73 1.1.0 portable ZIP](https://github.com/N4EAC/QSO73/releases/download/v1.1.0/QSO73-1.1.0-windows-x64-portable.zip) | **Testing** |
+| macOS 13+, Apple Silicon | [QSO73 1.1.1 DMG](https://github.com/N4EAC/QSO73/releases/download/v1.1.1/QSO73-1.1.1-macOS-arm64.dmg) | Development build, ad-hoc signed |
+| Windows 10 (1903+) / Windows 11, x64 | [QSO73 1.1.1 portable ZIP](https://github.com/N4EAC/QSO73/releases/download/v1.1.1/QSO73-1.1.1-windows-x64-portable.zip) | **Testing** |
 
 Download the DMG or ZIP for your platform. Source-code ZIPs are not ready-to-run applications. macOS is not notarized; Intel Mac builds are not supplied. Windows is unsigned and remains a testing build. Preserve settings and personal contact files when replacing an existing installation.
+
+## New in 1.1.1
+
+- Network Hamlib models accept an upstream host:port instead of requiring a serial device. FLRig XML-RPC has a configurable address; network and local listening ports are kept distinct.
+- Windows can reuse an existing rigctld at a configured host/port and leaves it running on Stop. Automatic Hamlib remains available for direct serial radios and network wrappers.
+- Windows adds **com** (RTS/DTR/both) and **none** PTT alongside rigctl and VOX. Serial PTT, VOX and none bypass CAT startup. Virtual COM/com0com names can be entered manually.
+- Dummy is identified as simulation. The manual adds connection examples and troubleshooting on page 25.
 
 ## New in 1.1.0
 
@@ -30,7 +37,7 @@ The screenshot uses sample messages in an isolated offline preview; it is not an
 
 ## User manual
 
-Read the [PDF manual](docs/QSO73-User-Manual.pdf) or [Markdown manual](USER_MANUAL.md). The current 24-page manual is included in both packages and as a release asset. Page 24 covers saved contacts, favorites, deletion/reset and the map. See the [Windows setup guide](windows/README.md) and [validation report](windows/TEST_RESULTS.md).
+Read the [PDF manual](docs/QSO73-User-Manual.pdf) or [Markdown manual](USER_MANUAL.md). The current 25-page manual is included in both packages and as a release asset. Page 24 covers saved contacts, favorites, deletion/reset and the map; page 25 covers CAT, FLRig, virtual ports and serial-only PTT. See the [Windows setup guide](windows/README.md) and [validation report](windows/TEST_RESULTS.md).
 
 ## Radio setup
 

@@ -39,9 +39,22 @@ int main(int argc, char **argv) {
                                            "115200", "-P", "RIG", "-T",
                                            "127.0.0.1", "-t", "4532", "-vv"}));
   reject([] { rigArguments(0, "COM1", 9600); });
-  reject([] { rigArguments(1, "COM0", 9600); });
-  reject([] { rigArguments(1, "COM3 -m 1", 9600); });
-  reject([] { rigArguments(1, "COM3", 0); });
+  reject([] { rigArguments(3092, "COM0", 9600); });
+  reject([] { rigArguments(3092, "COM3 -m 1", 9600); });
+  reject([] { rigArguments(3092, "COM3", 0); });
+  assert(serialEndpoint("CNCA0") && serialEndpoint("CNCB12") && serialEndpoint("com257"));
+  assert(!serialEndpoint("COM0") && !serialEndpoint("COM3 -m 1"));
+  auto virtualArgs = rigArguments(3092, "CNCA0", 19200, 5002);
+  assert(std::find(virtualArgs.begin(), virtualArgs.end(), "CNCA0") != virtualArgs.end());
+  assert(std::find(virtualArgs.begin(), virtualArgs.end(), "5002") != virtualArgs.end());
+  auto flrig = rigArguments(4, "127.0.0.1:12345", 0);
+  assert(std::find(flrig.begin(), flrig.end(), "-s") == flrig.end());
+  auto net = rigArguments(2, "radio.example:5000", 0);
+  assert(std::find(net.begin(), net.end(), "radio.example:5000") != net.end());
+  reject([] { rigArguments(4, "COM3", 9600); });
+  reject([] { rigArguments(4, "localhost:65536", 9600); });
+  reject([] { rigArguments(2, "localhost:4532", 9600); });
+  assert(!rigArguments(1, "", 0).empty());
   if (argc > 1) {
     std::ifstream f(argv[1]);
     auto all =

@@ -20,3 +20,12 @@ Verify the Contacts/Favorites tab, individual deletion and confirmation dialogs,
 ## Package contents and personal data
 
 The portable folder includes QSO73.exe, QSO73-Activity.exe, modem73, official Hamlib 4.7.2 runtime/dependencies, corresponding Hamlib/libusb source archives, licenses and the current manual. The offline map is embedded in QSO73.exe. Distribution uses an explicit whitelist, excluding settings.json, contacts.json, station-directory.json, operator logs and test data. Keep those personal files from an existing portable installation when replacing its program files.
+
+
+## 1.1.1 CAT connection corrections (October 16, 2026)
+
+- Windows client cross-build and complete portable dependency checks pass.
+- Native CAT argument tests cover real serial radios, manually typed COM/com0com names, FLRig and NET rigctl endpoints, distinct upstream/listening ports, and Dummy simulation.
+- Real Hamlib 4.7.2 FLRig and NET rigctl backends read simulated radios over custom loopback ports. No real radio is used by these tests.
+- macOS regression suite and Windows/Mac interoperability suite pass. macOS application build and deep signature verification pass.
+- Windows GUI/hardware verification, including IC-7760 with Win4IcomSuite/com0com and physical RTS/DTR keying, remains pending. Changing connection options does not extend Hamlib's underlying radio-driver support.

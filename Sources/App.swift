@@ -179,7 +179,7 @@ struct MainView: View {
                         .foregroundStyle(modem.attached ? .green : .secondary)
                         .lineLimit(1).help(modem.status)
                     Text(workspace.settings.callsign.isEmpty ? "Configure your station" : workspace.settings.callsign).font(.headline)
-                    Text("QSO73 1.1.0 · modem73").font(.caption).foregroundStyle(.secondary)
+                    Text("QSO73 1.1.1 · modem73").font(.caption).foregroundStyle(.secondary)
                 }.frame(width: 188, alignment: .leading).padding().layoutPriority(1)
             }.navigationSplitViewColumnWidth(220)
         } detail: {
@@ -556,6 +556,10 @@ struct SettingsView: View {
                         }
                         Button(radioModels.busy ? "Loading models…" : "Refresh Radio Models") { Task { await radioModels.refresh() } }.disabled(radioModels.busy)
                         Text(radioModels.message).font(.caption).foregroundStyle(.secondary)
+                        if workspace.rigSettings.model == 2 || workspace.rigSettings.model == 4 {
+                            TextField("Upstream server host:port", text: $workspace.rigSettings.device)
+                            Text("FLRig: use its XML-RPC host and port (usually 127.0.0.1:12345). NET rigctl: use the upstream rigctld host and port. QSO73's listening port above must be different.").font(.caption).foregroundStyle(.secondary)
+                        } else if workspace.rigSettings.model != 1 && workspace.rigSettings.model != 6 {
                         Picker("CAT serial device", selection: $workspace.rigSettings.device) {
                             Text("Select a CAT serial device").tag("")
                             ForEach(deviceOptions(serialDevices, selected: workspace.rigSettings.device).filter { !$0.isEmpty }, id: \.self) { Text($0).tag($0) }
@@ -564,9 +568,13 @@ struct SettingsView: View {
                         Picker("CAT baud rate", selection: $workspace.rigSettings.baud) {
                             ForEach([4800,9600,19200,38400,57600,115200], id: \.self) { Text(String($0)).tag($0) }
                         }
+                        }
+                        if workspace.rigSettings.model == 1 || workspace.rigSettings.model == 6 {
+                            Text("Dummy is a simulation; it cannot control or key a real radio. For CAT-free transmission choose Serial DTR/RTS or VOX as the PTT method.").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
-                Text("An existing rigctld is reused. Otherwise QSO73 starts it for the selected serial port and matching radio baud rate. Hamlib must be installed. External modems manage their own rigctld.").font(.caption).foregroundStyle(.secondary)
+                Text("An existing rigctld is reused. Turn automatic startup off to use only that service at the host/port above. For direct serial control, select your actual radio model. For CAT-free operation choose Serial DTR/RTS, VOX, or None. Hamlib must be installed for automatic startup.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }

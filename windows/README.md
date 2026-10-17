@@ -1,10 +1,10 @@
 # QSO73 Windows portable test client
 
-**Version 1.1.0 Windows testing — Windows 10 (1903 or later) / Windows 11, x64.**
+**Version 1.1.1 Windows testing — Windows 10 (1903 or later) / Windows 11, x64.**
 
-This is an early Windows companion for testing with QSO73 1.1.0 on macOS. It implements the same QSO73 v1 channel/direct protocol and bundles the official Windows modem73 engine. Extract the **entire folder** to a writable directory and run **QSO73.exe**. No installer, Python, MSYS2 or WSL is required by the tester. Keep both the `engine` and `hamlib` folders beside the client. Hamlib 4.7.2 and all its runtime DLLs are included; no separate Hamlib installation or PATH changes are needed. Settings and logs stay inside the portable folder. Running inside the ZIP is not supported.
+This is an early Windows companion for testing with QSO73 1.1.1 on macOS. It implements the same QSO73 v1 channel/direct protocol and bundles the official Windows modem73 engine. Extract the **entire folder** to a writable directory and run **QSO73.exe**. No installer, Python, MSYS2 or WSL is required by the tester. Keep both the `engine` and `hamlib` folders beside the client. Hamlib 4.7.2 and all its runtime DLLs are included; no separate Hamlib installation or PATH changes are needed. Settings and logs stay inside the portable folder. Running inside the ZIP is not supported.
 
-The Windows executable has been cross-compiled on macOS. Packet compatibility and the modem DSP have local automated checks. A tester has reported successful radio connection and over-the-air message transmission with Windows test 2. The PING controls, improved activity dashboard and automatic chat scrolling in 1.1.0 still require verification on Windows hardware. The upstream Windows modem port is itself experimental. This package is unsigned.
+The Windows executable has been cross-compiled on macOS. Packet compatibility and the modem DSP have local automated checks. A tester has reported successful radio connection and over-the-air message transmission with Windows test 2. The PING controls, improved activity dashboard and automatic chat scrolling in 1.1.1 still require verification on Windows hardware. The upstream Windows modem port is itself experimental. This package is unsigned.
 
 ## Prepare the Windows station
 
@@ -12,11 +12,15 @@ The Windows executable has been cross-compiled on macOS. Packet compatibility an
 2. Open QSO73. Enter your own **Station callsign** (optional SSID 0–15) and **Grid**.
 3. Click **Refresh audio devices**. Select the radio USB device under **Radio RX audio input** and **Radio TX audio output**. Default speakers/microphone are deliberately excluded. Refresh again after reconnecting a radio. If two devices have the same name, disconnect the unused one for this test.
 4. Choose **robust / RDM-600S** to start an HF trial. This matches the suggested Mac starting mode. Stop the modem to change settings. OFDM choices use rate 1/2; MFSK modes are also available. Receivers decode the supported modem families automatically.
-5. Choose **rigctl** PTT (default). Choose your exact **Radio model (bundled Hamlib)**, **CAT COM port** and **baud** matching the radio menu. The model list comes from the bundled Hamlib and shows the number, brand and model. COM ports are detected locally; refresh after reconnecting a radio. Some radios expose two serial ports: select the CAT port specified by the manufacturer's documentation. Stop other radio programs that hold that port. Alternatively choose **vox** if the radio is configured for data VOX; no CAT daemon is started in that mode.
+5. Choose **rigctl** PTT (default). Choose your exact **Radio model (bundled Hamlib)**, **CAT COM port** and **baud** matching the radio menu. The model list comes from the bundled Hamlib and shows the number, brand and model. COM ports are detected locally; refresh after reconnecting a radio. Some radios expose two serial ports: select the CAT port specified by the manufacturer's documentation. Stop other radio programs that hold that port. For shared CAT services or serial-only PTT, use the connection choices below.
 6. Click **Save settings**, then **Start Modem**. QSO73 starts its bundled rigctld on localhost, waits for a successful radio frequency read, then starts modem73. Wait for **Connected**, **Audio ready** and **CAT connected** in the bottom status line. Transmission is inhibited when audio or rigctl PTT is unavailable or status is stale. Failed CAT startup reports an error; inspect **Modem Activity** or `rigctld.log` for details.
 7. Set the radio to its USB data mode and select USB/audio-interface input as its data modulation source. Begin at a low radio power and suitable TX audio level (QSO73 default 25%). Verify the radio's own ALC and power indication on the first agreed short transmission.
 
-You do not need to enter a rigctld command or configure TCP ports. CAT uses internal localhost port 4532. If another service already occupies it, QSO73 asks you to stop that service instead of attaching to an unknown radio. **Stop Modem** releases PTT, stops modem73 and closes the rigctld process it started. Exiting also stops both processes; a Windows job object prevents orphaned children after the client exits unexpectedly.
+With **rigctl** PTT, choose **Automatic Hamlib** for a directly connected radio, or **Existing rigctld** and its host/port to reuse a working service. QSO73 never closes a reused service. For FLRig use Automatic Hamlib, model **4**, and enter its XML-RPC endpoint (normally `127.0.0.1:12345`) in **CAT endpoint**, with local rigctld listening on a different port (normally 4532). Model **2** similarly takes an upstream rigctld address, not a COM port.
+
+For CAT-free keying choose **com** PTT, then enter **Serial PTT only** port and RTS/DTR/both. **vox** and **none** also bypass Hamlib; none sends no PTT command. These choices provide no CAT readback or PSK Reporter uploads. Virtual COM/com0com names may be typed even when not detected. Use the port and radio protocol exposed by Win4IcomSuite; do not open an endpoint already held exclusively by another program. Dummy cannot key a real radio. See manual page 25 for all connection routes.
+
+**Stop Modem** releases PTT and stops the modem and Hamlib processes QSO73 started. It leaves reused radio-control services running.
 
 **Set Frequency** accepts MHz (for example `7.105`) and requires rigctl and an idle modem; check the radio dial afterward. It does not send a tuning carrier. Hamlib support varies by model and driver; correct CAT readback and actual PTT must be checked on the tester's radio.
 
@@ -61,7 +65,7 @@ Only the **builder** needs MSYS2. The recipient of a built ZIP does not.
 1. Install official MSYS2, then open **MSYS2 MinGW64**.
 2. Install the build tools: `pacman -S --needed make zip unzip mingw-w64-x86_64-gcc`.
 3. From Windows PowerShell, run `./Build-Windows.ps1` in this source folder. If MSYS2 is elsewhere, use `./Build-Windows.ps1 -MsysRoot 'D:\msys64'`.
-4. The script builds the client and bundled engine and creates **dist/QSO73-1.1.0-windows-x64-portable.zip**. Share that ZIP, not just QSO73.exe.
+4. The script builds the client and bundled engine and creates **dist/QSO73-1.1.1-windows-x64-portable.zip**. Share that ZIP, not just QSO73.exe.
 
 Alternatively, in MinGW64, run `CXX=g++ CC=gcc WINDRES=windres ./build.sh`. On macOS/Linux with mingw-w64 available, run `./build.sh`. The source dependencies are vendored and pinned; no engine or Hamlib downloads occur during a build. `build.sh` can be rerun after editing the client. The root Mac build is unchanged.
 
@@ -111,22 +115,22 @@ Clear removes only the currently displayed conversation's messages while preserv
 
 ## Setup, gain, themes and contacts
 
-Windows 1.1.0 has separate Chat, Setup, Contact Log and Contacts tabs. The radio frequency has its own labeled group. Stop Modem keeps the GUI open: a custom console handler protects the client against both CTRL_C and CTRL_BREAK while signaling its own child processes. Handler registration is checked before sending a console signal.
+Windows 1.1.1 has separate Chat, Setup, Contact Log and Contacts tabs. The radio frequency has its own labeled group. Stop Modem keeps the GUI open: a custom console handler protects the client against both CTRL_C and CTRL_BREAK while signaling its own child processes. Handler registration is checked before sending a console signal.
 
 Both clients provide saved Default, CP and Crimson themes and -20…+20 dB RX/TX software gain. RX is scaled before decoding; TX gain multiplies TX audio percentage. Samples are limited at digital full scale and meters measure the adjusted streams. Gain changes apply only when idle and are saved for startup. Updated bundled engines expose rx_gain_db / tx_gain_db in get_config and validate them in set_config; CLI options are --rx-gain-db / --tx-gain-db. Older Mac profiles retain their settings with zero gain defaults.
 
 Both clients have manual contact creation/editing and ADIF 3.1.6 export using PKT, UTC date/time on/off, frequency/band, station/operator callsigns and optional grid/report/comment fields. ADIF is for TQSL signing and LoTW submission, not direct unsigned upload. Portable contacts.json is user data and is never included in release ZIPs.
 
-## Windows 1.1.0 theme correction
+## Windows 1.1.1 theme correction
 
 The CP theme colors the entire tab strip, including Chat, Setup, Contact Log and Contacts. Switching themes redraws shared controls immediately; Default restores system tab rendering. The theme selection no longer displays the CP definition caption. Cross-compilation and UI contract checks pass; visual verification on Windows remains pending.
 
-Windows 1.1.0 applies the selected CP theme to both New Contact and Edit Selected dialogs, including the background, labels, text fields and Save/Cancel buttons. Default retains standard Windows controls. Windows visual verification remains pending.
+Windows 1.1.1 applies the selected CP theme to both New Contact and Edit Selected dialogs, including the background, labels, text fields and Save/Cancel buttons. Default retains standard Windows controls. Windows visual verification remains pending.
 
-## 1.1.0: Contacts, favorites, map and Crimson
+## 1.1.1: Contacts, favorites, map and Crimson
 
 Open **Contacts** to review the saved callsign directory and its separate Favorites list. Select a row, enter a verified grid and click **Save grid**; **Favorite / Unfavorite** changes membership. **Delete...** erases only the selected station. **Clear contacts...** preserves favorites; **Full reset...** erases all directory entries and favorites. Destructive actions require confirmation. The completed-QSO ADIF Contact Log is separate.
 
 Received beacons and PING replies can supply a grid. **Contact Map** opens an offline, themed map in your browser; unknown grids remain listed without a pin. Reopen after edits or theme changes. Choose **Crimson** in Setup for the burgundy/rose theme, alongside Default and CP.
 
-The directory is saved in **station-directory.json** beside QSO73.exe. Preserve that file, **settings.json** and **contacts.json** when replacing this portable folder. None of these personal files is included in distributed ZIPs. Both platforms use version **1.1.0** under the same GitHub release. Windows remains testing.
+The directory is saved in **station-directory.json** beside QSO73.exe. Preserve that file, **settings.json** and **contacts.json** when replacing this portable folder. None of these personal files is included in distributed ZIPs. Both platforms use version **1.1.1** under the same GitHub release. Windows remains testing.

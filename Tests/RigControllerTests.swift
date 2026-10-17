@@ -5,6 +5,14 @@ import Foundation
         var rig = RigSettings(); rig.device = "/dev/test-radio"
         let args = try rig.arguments(port: station.rigPort)
         guard args.contains("1049"), args.contains("38400"), args.contains("/dev/test-radio") else { fatalError("CAT arguments") }
+        var network = rig; network.model = 4; network.device = "127.0.0.1:12345"
+        let networkArgs = try network.arguments(port: station.rigPort)
+        guard networkArgs.contains("127.0.0.1:12345"), !networkArgs.contains("-s") else { fatalError("FLRig requires a network endpoint, not serial settings") }
+        network.model = 2; network.device = "localhost:5000"
+        _ = try network.arguments(port: 4532)
+        do { _ = try network.arguments(port: 5000); fatalError("Recursive network backend accepted") } catch RadioError.invalid { }
+        network.device = ""; do { _ = try network.arguments(port: 4532); fatalError("Missing endpoint accepted") } catch RadioError.invalid { }
+        network.model = 1; _ = try network.arguments(port: 4532)
         let owned = RigController()
         try await owned.prepare(rig, station: station, executable: URL(fileURLWithPath: CommandLine.arguments[2]))
         guard await RigController.available(host: station.rigHost, port: station.rigPort) else { fatalError("Owned daemon not ready") }

@@ -11,6 +11,7 @@ build/dsp-roundtrip > build/dsp-test.log 2>&1
 rg '^PASS:' build/dsp-test.log
 swiftc -swift-version 5 -module-cache-path build/module-cache -framework Network Sources/Protocol.swift Sources/RigController.swift Tests/RigControllerTests.swift -o build/rig-controller-tests
 python3 Tests/run_rig_tests.py
+python3 Tests/network_cat_backends.py
 clang++ -std=c++17 -O2 -I vendor/modem73 Tests/audio_route_probe.cc vendor/modem73/deps/miniaudio.o -o build/audio-route-probe
 build/audio-route-probe
 

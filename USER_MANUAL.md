@@ -2,13 +2,13 @@
 
 ## Amateur-radio chat with modem73
 
-**macOS 1.1.0 / Windows 1.1.0 (testing) | modem73 2.4.2**
+**macOS 1.1.1 / Windows 1.1.1 (testing) | modem73 2.4.2**
 
-Edition: October 15, 2026
+Edition: October 16, 2026
 
 QSO73 combines a chat client with a local radio modem. Use it for plain packet chat, shared channels, addressed direct conversations, station beacons and channel invitations.
 
-Chapters 1-13 describe the macOS client in version 1.1.0; the channel walkthrough applies to both clients. See page 16 for Windows 1.1.0 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
+Chapters 1-13 describe the macOS client in version 1.1.1; the channel walkthrough applies to both clients. See page 16 for Windows 1.1.1 setup and its interface differences. Instructions for an independently installed engine may differ where that engine supplies fewer diagnostics.
 
 ### Find what you need
 
@@ -37,6 +37,7 @@ Chapters 1-13 describe the macOS client in version 1.1.0; the channel walkthroug
 | 22 | Setup tabs, audio amplification and themes |
 | 23 | Creating contacts and exporting ADIF for LoTW |
 | 24 | Saved contacts, favorites, deletion controls and offline map |
+| 25 | CAT connection choices, FLRig and serial-only PTT |
 
 **Start here:** for an HF chat trial, use ROBUST / RDM-600S with the radio's USB audio input and output selected. This is a suggested starting point, not a guaranteed link setting.
 
@@ -334,7 +335,7 @@ These are two separate functions. Both use the same selected modem transmit mode
 
 Enable **Beacon** in Radio Chat and select **Interval**, or configure it in Station Settings. The selectable range is **1-60 minutes**. A valid 4-, 6- or 8-character Maidenhead grid is required.
 
-Example for this release: `BEACON N4EAC FM18FW QSO73 v1.1.0`
+Example for this release: `BEACON N4EAC FM18FW QSO73 v1.1.1`
 
 It broadcasts to QST without changing your selected conversation or draft. **Beacon Now** requests a beacon while enabled and connected; a busy modem defers the request. The first automatic beacon follows one full interval after connection or configuration.
 
@@ -475,7 +476,7 @@ Use **Modem events** in Radio Chat when diagnosing startup, device routing or co
 
 ### Basis of this manual
 
-Application behavior was checked against QSO73 1.1.0 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
+Application behavior was checked against QSO73 1.1.1 source and its local tests. Mode bandwidth/framing/coding tables were checked against the bundled modem73 2.4.2 definitions. Starting-mode recommendations are operating suggestions, not measured range or SNR guarantees.
 
 Engine source: https://github.com/RFnexus/modem73/tree/3a37c290a5330bd95f4f283feafc5ba5605bdc52
 
@@ -518,19 +519,19 @@ All rooms share one radio frequency and transmit queue. Private chat is addresse
 
 # 15. Windows portable testing build
 
-The Windows companion is **1.1.0 (testing)**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Version 1.1.0 includes Setup/Contact Log tabs, audio gain and themes, and fixes Stop Modem closing the client. Windows hardware verification remains pending.
+The Windows companion is **1.1.1 (testing)**, for Windows 10 (1903+) or Windows 11 on x64. It uses the same QSO73 channel/direct protocol as the Mac. A tester has reported a working radio connection and over-the-air message transmission with test 2. Version 1.1.1 includes Setup/Contact Log tabs, audio gain and themes, and fixes Stop Modem closing the client. Windows hardware verification remains pending.
 
 ### Extract and configure
 
 1. Extract the whole portable ZIP to a writable folder and run **QSO73.exe**. Keep **QSO73-Activity.exe**, **engine/** and **hamlib/** together. No installer, MSYS2, Python, WSL or separate Hamlib installation is needed by the operator.
 2. Open the **Setup** tab. Enter your **Station callsign** and **Grid**. Click **Refresh audio devices**, then choose the radio USB device for both RX input and TX output. System-default audio devices are excluded.
-3. Choose **robust / RDM-600S** for an initial HF trial. With **rigctl** PTT selected, choose your exact **Radio model**, **CAT COM port** and **baud** matching the radio's settings. Use Refresh models / COM ports after reconnecting. Other applications must release the CAT serial port.
+3. Choose **robust / RDM-600S** for an initial HF trial. With **rigctl** PTT selected, use **Automatic Hamlib** and your actual **Radio model**, **CAT endpoint** (serial port) and matching **baud**, or use the connection options on page 25. Use Refresh models / COM ports after reconnecting. Other applications must release the CAT serial port.
 4. Click **Save settings**, then **Start Modem**. QSO73 starts bundled Hamlib 4.7.2, checks a radio frequency read, and starts modem73. Wait for Connected, Audio ready and CAT connected. Failed startup details appear in Modem Activity / rigctld.log.
 5. Use USB data mode and the radio's USB data modulation source. Start with low radio power and adjust TX audio using the radio's own ALC indication. Agree on frequency and operating settings with your test partner.
 
 Open **Chat** for messages, meters and frequency controls. **Contact Log** contains the contact creator and ADIF export. Start/Stop stays available above the tabs.
 
-**Stop Modem** keeps QSO73 open, releases PTT and closes the modem and Hamlib processes QSO73 started. CAT ports are internal. An occupied port reports an error instead of taking over another radio service. VOX is an alternative PTT choice when configured on the radio; it does not provide CAT frequency readback.
+**Stop Modem** keeps QSO73 open, releases PTT and closes the modem and Hamlib processes QSO73 started. The rigctld host and listening port are configurable. A working existing rigctld is reused and left running at Stop. Serial **com** PTT, VOX and none bypass CAT startup; see page 25.
 
 ### Read activity and frequency
 
@@ -767,7 +768,7 @@ Sources: https://www.adif.org/316/ADIF_316.htm and https://lotw.arrl.org/lotw-he
 
 ## Remember stations between sessions
 
-QSO73 1.1.0 keeps received callsigns, last-heard times and known grids across launches on both platforms. It also remembers manually added destinations. On macOS open **Contacts & Favorites** in the sidebar, or **Contacts / Favorites…** beside To. On Windows open **Contacts**. This directory is separate from the completed-QSO ADIF Contact Log.
+QSO73 1.1.1 keeps received callsigns, last-heard times and known grids across launches on both platforms. It also remembers manually added destinations. On macOS open **Contacts & Favorites** in the sidebar, or **Contacts / Favorites…** beside To. On Windows open **Contacts**. This directory is separate from the completed-QSO ADIF Contact Log.
 
 Select a row to edit its Maidenhead grid or favorite status. macOS: tick **Favorite**, then **Save**. Windows: **Favorite / Unfavorite** toggles the selected station; **Save grid** saves its grid. Favorites appear in their own list and first in the To menu. **Use callsign** returns to Radio Chat and selects that destination; it does not transmit.
 
@@ -793,3 +794,32 @@ Drag to pan; use **+ / −** to zoom and **World** to reset. Click a mapped call
 No map account, API key, online lookup or tile download is required. Country outlines are bundled public-domain Natural Earth data. The generated HTML stays local and contains the retained directory, so treat that file as personal station data when sharing it.
 
 macOS saves the directory in QSO73 preferences. Windows saves **station-directory.json** beside QSO73.exe; preserve it along with settings.json and contacts.json when replacing the portable folder. User data is excluded from release packages. An unreadable directory is preserved until an explicit Full reset.
+
+
+<!-- page -->
+
+# 24. CAT connections and serial PTT
+
+### Direct serial CAT
+
+Select **rigctl** PTT and enable automatic rigctld startup on macOS, or choose **Automatic Hamlib** on Windows. Select your actual radio model, serial port and matching baud. Keep the rigctld host local and normally use listening port **4532**. Radio model **2 - Hamlib NET rigctl** is a network client, not a physical radio driver. Dummy is a simulation and cannot key a real transmitter.
+
+### Use an existing rigctld
+
+On macOS turn **Start rigctld automatically** off. On Windows choose **Existing rigctld**. Enter the host and port of that running rigctld. No CAT serial port/model is needed in QSO73 for this route. The server must already control the intended radio and answer frequency queries. Stop Modem leaves that external service running.
+
+### FLRig or an upstream network radio server
+
+Choose automatic startup and model **4 - FLRig**. In **Upstream server host:port** (macOS) or **CAT endpoint** (Windows), enter FLRig's configured XML-RPC address, commonly **127.0.0.1:12345**. Enable the server in FLRig and connect FLRig to the radio first. The QSO73 rigctld host/port remains **127.0.0.1 / 4532**; these are two different connections.
+
+For an upstream rigctld, model **2 - Hamlib NET rigctl** similarly takes an upstream host:port. Its port must differ from QSO73's local listening port. Connecting directly through Existing rigctld is usually simpler. Serial baud is ignored for these network models.
+
+### Windows virtual COM ports / Win4IcomSuite
+
+Use the virtual CAT endpoint assigned to QSO73 by your radio-control software, paired with the radio model/protocol that software exposes. Type **COM12**, **CNCA0** or **CNCB0** if it is missing from the list. Refresh is a convenience; listing a port is not required to use it. Another application must not open the same endpoint exclusively. Hamlib driver support and the virtual CAT protocol still have to match.
+
+### PTT without CAT
+
+On Windows choose **com**, then set **Serial PTT only** port and line (**rts**, **dtr** or **both**). On macOS choose **Serial DTR/RTS**, then its device and line. This starts the modem without Hamlib/CAT. The PTT endpoint must reach the radio's keying line; a virtual CAT pair alone does not establish that route. Choose **vox** for configured radio VOX, or **none** for audio without a PTT command. No CAT frequency, meters, Set Frequency or PSK Reporter uploads are available with these CAT-free choices.
+
+Save and restart the modem after connection changes. Verify receive audio, frequency readback where used, and actual radio keying on the test setup. These connection paths have automated argument/protocol tests; the reported Windows IC-7760/Win4IcomSuite/com0com setup still needs an operator test.

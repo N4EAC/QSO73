@@ -7,11 +7,27 @@ struct RigSettings: Codable, Equatable {
     var device = ""
     var baud = 38400
     func arguments(port: Int) throws -> [String] {
-        guard model > 0, device.hasPrefix("/dev/"), [4800,9600,19200,38400,57600,115200].contains(baud), (1...65535).contains(port) else {
-            throw RadioError.invalid("Select the CAT serial device, radio model and matching CAT baud rate.")
+        guard model > 0, (1...65535).contains(port) else { throw RadioError.invalid("Select a radio model and valid rigctld listening port.") }
+        var args = ["-m", String(model)]
+        if model == 2 || model == 4 {
+            let parts = device.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 2, !parts[0].isEmpty, !device.contains(where: { $0.isWhitespace }),
+                  let remotePort = Int(parts[1]), (1...65535).contains(remotePort) else {
+                throw RadioError.invalid("Enter the upstream radio server as host:port (FLRig usually 127.0.0.1:12345; NET rigctl uses its configured rigctld port).")
+            }
+            guard !(["localhost", "127.0.0.1"].contains(String(parts[0])) && remotePort == port) else {
+                throw RadioError.invalid("The upstream server port must differ from QSO73's local rigctld port. To use an existing rigctld directly, turn automatic startup off.")
+            }
+            args += ["-r", device]
+        } else if model != 1 && model != 6 {
+            guard device.hasPrefix("/dev/"), [4800,9600,19200,38400,57600,115200].contains(baud) else {
+                throw RadioError.invalid("Select the CAT serial device, radio model and matching CAT baud rate.")
+            }
+            args += ["-r", device, "-s", String(baud)]
         }
-        return ["-m", String(model), "-r", device, "-s", String(baud), "-P", "RIG", "-T", "127.0.0.1", "-t", String(port)]
+        return args + ["-P", "RIG", "-T", "127.0.0.1", "-t", String(port)]
     }
+
     static var serialDevices: [String] {
         ((try? FileManager.default.contentsOfDirectory(atPath: "/dev")) ?? [])
             .filter { $0.hasPrefix("cu.") && !$0.contains("Bluetooth") && !$0.contains("debug-console") }
@@ -113,7 +129,7 @@ struct RigSettings: Codable, Equatable {
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
         stop()
-        throw RadioError.invalid("rigctld could not read the radio frequency. Check the CAT serial port and radio baud rate.")
+        throw RadioError.invalid("rigctld could not read the radio frequency. Check the selected model and serial settings, or the upstream server host/port. Network models need a running radio server.")
     }
     func cancelStartup() { epoch = UUID() }
     func stop() {

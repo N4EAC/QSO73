@@ -34,7 +34,7 @@
 #include <sstream>
 #include <thread>
 using namespace qso;
-constexpr const wchar_t *VERSION = L"1.1.0 Windows (testing)";
+constexpr const wchar_t *VERSION = L"1.1.1 Windows (testing)";
 enum ControlID {
   START = 101,
   ROOMS,
@@ -95,6 +95,7 @@ enum SettingID {
   RIGMODEL,
   CATCOM,
   CATBAUD,
+  RIGSERVICE, PTTPORT, PTTLINE,
   RXGAIN,
   TXGAIN,
   THEME, DIRECTORYLIST, FAVORITELIST, DIRECTORYGRID, DIRSAVE, DIRFAVORITE, DIRDELETE, DIRCLEAR, DIRRESET, DIRMAP, DIRUSE
@@ -147,7 +148,7 @@ struct Settings {
                                          ptt = "rigctl", rigHost = "127.0.0.1",
                                          custom;
   int drive = 25, rigPort = 4532, rigModel = 0, catBaud = 38400;
-  std::string catCOM;
+  std::string catCOM, rigService = "Automatic Hamlib", pttPort, pttLine = "rts";
   int rxGain = 0, txGain = 0;
   std::string theme = "Default";
   bool autoPing = false, pskReporter = false, autoHeard = false;
@@ -329,7 +330,8 @@ void saveSettings() {
            {"ptt", settings.ptt},
            {"rigHost", settings.rigHost},
            {"custom", settings.custom},
-           {"catCOM", settings.catCOM}})
+           {"catCOM", settings.catCOM}, {"rigService", settings.rigService},
+           {"pttPort", settings.pttPort}, {"pttLine", settings.pttLine}})
     cJSON_AddStringToObject(j.p, p.first, p.second.c_str());
   cJSON_AddBoolToObject(j.p, "autoPing", settings.autoPing);
   cJSON_AddBoolToObject(j.p, "autoHeard", settings.autoHeard);
@@ -372,10 +374,14 @@ void loadSettings() {
     settings.family = j.str("family");
     settings.mode = j.str("mode");
     settings.ptt = j.str("ptt");
-    settings.rigHost = "127.0.0.1";
+    settings.rigHost = j.str("rigHost");
+    if(settings.rigHost.empty()) settings.rigHost = "127.0.0.1";
     settings.custom = j.str("custom");
     settings.drive = int(j.num("drive", 25));
-    settings.rigPort = 4532;
+    settings.rigPort = int(j.num("rigPort", 4532));
+    if(!j.str("rigService").empty()) settings.rigService = j.str("rigService");
+    settings.pttPort = j.str("pttPort");
+    if(!j.str("pttLine").empty()) settings.pttLine = j.str("pttLine");
     settings.rigModel = int(j.num("rigModel", 0));
     settings.catCOM = j.str("catCOM");
     settings.catBaud = int(j.num("catBaud", 38400));
@@ -414,28 +420,39 @@ void readSettings() {
   s.family = value(FAMILY);
   s.mode = value(MODE);
   s.ptt = value(PTT);
-  s.rigHost = "127.0.0.1";
+  s.rigHost = trim(value(RIGHOST));
+  s.rigService = value(RIGSERVICE);
+  s.pttPort = call(value(PTTPORT));
+  s.pttLine = value(PTTLINE);
   s.custom = value(CUSTOMTEXT);
   s.drive = std::stoi(value(DRIVE));
-  s.rigPort = 4532;
+  s.rigPort = s.ptt == "rigctl" ? std::stoi(value(RIGPORT)) : settings.rigPort;
   int index = int(SendMessageW(controls[RIGMODEL], CB_GETCURSEL, 0, 0));
   s.rigModel = index > 0 && index <= int(modelCatalog.size())
                    ? modelCatalog[index - 1].id
                    : 0;
-  s.catCOM = call(value(CATCOM));
-  s.catBaud = std::stoi(value(CATBAUD));
-  if (s.ptt == "rigctl")
-    rigArguments(s.rigModel, s.catCOM, s.catBaud);
+  s.catCOM = trim(value(CATCOM));
+  s.catBaud = s.ptt == "rigctl" ? std::stoi(value(CATBAUD)) : settings.catBaud;
+  if (s.ptt == "rigctl" && s.rigService == "Automatic Hamlib") {
+    if (s.rigHost != "127.0.0.1" && s.rigHost != "localhost")
+      throw std::runtime_error("Automatic Hamlib requires a local rigctld host. Use Existing rigctld for a remote service.");
+    rigArguments(s.rigModel, s.catCOM, s.catBaud, s.rigPort);
+  }
+  if (s.ptt == "com" && (!serialEndpoint(s.pttPort) ||
+      (s.pttLine != "rts" && s.pttLine != "dtr" && s.pttLine != "both")))
+    throw std::runtime_error("Serial PTT needs a COM/com0com port and RTS, DTR or both.");
+  if (s.ptt != "com" && s.ptt != "rigctl" && s.ptt != "vox" && s.ptt != "none")
+    throw std::runtime_error("Select a supported PTT method.");
   if (!station(s.call))
     throw std::runtime_error("Enter your callsign, optional SSID 0-15.");
   if (s.input.empty() || s.output.empty() || s.input == "default" ||
       s.output == "default")
     throw std::runtime_error(
         "Select explicit radio USB input and output devices.");
-  if (s.drive < 5 || s.drive > 100 || s.rigPort < 1 || s.rigPort > 65535)
+  if (s.drive < 5 || s.drive > 100 || (s.ptt == "rigctl" && (s.rigPort < 1 || s.rigPort > 65535)))
     throw std::runtime_error("Audio level: 5-100. rigctld port: 1-65535.");
-  if (s.rigHost.empty())
-    throw std::runtime_error("Enter the rigctld host.");
+  if (s.ptt == "rigctl" && (s.rigHost.empty() || s.rigHost.find_first_of(" \t\r\n:") != s.rigHost.npos))
+    throw std::runtime_error("Enter a rigctld hostname or IPv4 address without a port; use the separate port field.");
   settings = s;
   saveSettings();
 }
@@ -537,6 +554,7 @@ void refreshRig() {
       ports.push_back(narrow(port));
   }
   comboSet(CATCOM, ports, settings.catCOM);
+  comboSet(PTTPORT, ports, settings.pttPort);
   notify("Bundled Hamlib 4.7.2: " + std::to_string(modelCatalog.size()) +
          " models. Choose the radio's CAT COM port and matching baud.");
 }
@@ -684,7 +702,7 @@ std::string request(SOCKET s, const std::string &cmd) {
   throw std::runtime_error("Too many control notifications.");
 }
 std::string readCATFrequency() {
-  SOCKET socket = connectPort("127.0.0.1", 4532);
+  SOCKET socket = connectPort(settings.rigHost, settings.rigPort);
   if (socket == INVALID_SOCKET)
     return "";
   DWORD timeout = 500;
@@ -818,23 +836,27 @@ void network() {
 }
 void setSettingsEnabled(bool yes) {
   for (int id : std::vector<int>{CALL, GRID, RXDEVICE, OUTPUT, FAMILY, MODE,
-                                 PTT, DRIVE, RIGMODEL, CATCOM, CATBAUD,
+                                 PTT, DRIVE, RIGMODEL, CATCOM, CATBAUD, RIGSERVICE, RIGHOST, RIGPORT, PTTPORT, PTTLINE,
                                  CUSTOMTEXT, SAVE, REFRESH, REFRESHRIG})
     EnableWindow(controls[id], yes);
 }
 void startRig() {
   if (settings.ptt != "rigctl")
     return;
-  SOCKET existing = connectPort("127.0.0.1", 4532);
+  if (!readCATFrequency().empty()) {
+    notify("Using existing rigctld at " + settings.rigHost + ":" + std::to_string(settings.rigPort));
+    return;
+  }
+  if (settings.rigService == "Existing rigctld")
+    throw std::runtime_error("Cannot read frequency from existing rigctld. Check host/port and that its radio is connected. FLRig XML-RPC requires Automatic Hamlib, model 4, with its address in CAT endpoint.");
+  SOCKET existing = connectPort(settings.rigHost, settings.rigPort);
   if (existing != INVALID_SOCKET) {
     closesocket(existing);
-    throw std::runtime_error(
-        "CAT port 4532 is already in use. Stop the other rigctld/radio "
-        "application before starting QSO73's bundled CAT service.");
+    throw std::runtime_error("The rigctld listening port is occupied by a service that did not answer a frequency query. Choose a different local port, or check the existing service.");
   }
   auto pi = launchProgram(
       base + L"hamlib\\bin\\rigctld.exe",
-      rigArguments(settings.rigModel, settings.catCOM, settings.catBaud),
+      rigArguments(settings.rigModel, settings.catCOM, settings.catBaud, settings.rigPort),
       base + L"rigctld.log", true);
   rigDaemon = pi.hProcess;
   rigPID = pi.dwProcessId;
@@ -842,24 +864,13 @@ void startRig() {
   while (now() < deadline) {
     if (WaitForSingleObject(rigDaemon, 0) == WAIT_OBJECT_0)
       break;
-    SOCKET probe = connectPort("127.0.0.1", 4532);
-    if (probe != INVALID_SOCKET) {
-      bool ready = false;
-      if (sendAll(probe, Bytes{'f', '\n'})) {
-        char reply[512];
-        int n = recv(probe, reply, sizeof(reply), 0);
-        if (n > 0)
-          ready = validFrequencyReply(std::string(reply, reply + n));
-      }
-      closesocket(probe);
-      if (ready)
-        return;
-    }
+    if (!readCATFrequency().empty())
+      return;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   closeChild(rigDaemon, rigPID, CTRL_C_EVENT);
   throw std::runtime_error("Hamlib could not read the radio frequency. Check "
-                           "model, CAT COM port and baud; "
+                           "model, CAT endpoint and baud (serial) or upstream host:port (network); "
                            "see rigctld.log / Modem Activity.");
 }
 void start() {
@@ -915,6 +926,8 @@ void start() {
   if (settings.ptt == "rigctl")
     a.insert(a.end(), {"--rigctl", settings.rigHost + ":" +
                                        std::to_string(settings.rigPort)});
+  if (settings.ptt == "com")
+    a.insert(a.end(), {"--com-port", settings.pttPort, "--com-line", settings.pttLine});
   PROCESS_INFORMATION pi{};
   try {
     pi = launch(a, base + L"engine.log", true);
@@ -1385,7 +1398,7 @@ void automation() {
   if (beaconPending || (beaconOn && now() >= beaconDue)) {
     enqueue({settings.call, "QST",
              "BEACON " + settings.call + " " + settings.grid +
-                 " QSO73 v1.1.0",
+                 " QSO73 v1.1.1",
              true});
     beaconPending = false;
     beaconDue = beaconOn ? now() + minutes(BEACONMIN) * 60 : 0;
@@ -1411,7 +1424,7 @@ void automation() {
   }
 }
 std::string activity() {
-  std::string s = std::string("QSO73 1.1.0 Windows (testing) - ") +
+  std::string s = std::string("QSO73 1.1.1 Windows (testing) - ") +
                   (connected ? "connected" : "offline (last snapshots)") +
                   "\r\nInput: " + settings.input +
                   "\r\nOutput: " + settings.output + "\r\n\r\nSTATUS\r\n";
@@ -1595,7 +1608,7 @@ void pollUI() {
                std::to_string(int(j.num("rx_frame_count"))) + " TX " +
                std::to_string(int(j.num("tx_frame_count"))) + " | Queue " +
                std::to_string(queueDepth) + " | CAT " +
-               (j.yes("rigctl_connected") ? "connected" : "unavailable"));
+               (settings.ptt != "rigctl" ? "off (PTT: " + settings.ptt + ")" : (j.yes("rigctl_connected") ? "connected" : "unavailable")));
       } else if (e.kind == "config")
         rawConfig = e.data;
       else if (e.kind == "frames") {
@@ -1744,7 +1757,7 @@ void pollUI() {
       pskBatch = pskReports.reports;
       try {
         auto bytes = PSKReportQueue::encode(
-            settings.call, settings.grid, "QSO73 1.1.0 / modem73 2.4.2",
+            settings.call, settings.grid, "QSO73 1.1.1 / modem73 2.4.2",
             pskBatch, pskSequence, pskDomain, uint32_t(epoch()));
         pskSending = true;
         pskStatus = "PSK: submitting via Internet";
@@ -1926,7 +1939,7 @@ void makeUI() {
     TabCtrl_InsertItem(pages, TabCtrl_GetItemCount(pages), &item);
   }
   creatingPage = 1;
-  label(L"QSO73 1.1.0 Windows (testing)", 15, 14, 275);
+  label(L"QSO73 1.1.1 Windows (testing)", 15, 14, 275);
   label(L"Station callsign", 15, 50);
   edit(CALL, 15, 72, 260, settings.call);
   label(L"Grid", 15, 104, 75);
@@ -1945,11 +1958,11 @@ void makeUI() {
   combo(MODE, 120, 331, 155, {}, "");
   modes();
   label(L"PTT method / TX audio %", 15, 367, 270);
-  combo(PTT, 15, 390, 170, {"rigctl", "vox"}, settings.ptt);
+  combo(PTT, 15, 390, 170, {"rigctl", "com", "vox", "none"}, settings.ptt);
   edit(DRIVE, 195, 390, 80, std::to_string(settings.drive));
   label(L"Radio model (bundled Hamlib)", 15, 426, 270);
   combo(RIGMODEL, 15, 450, 260, {"Select radio model"}, "Select radio model");
-  label(L"CAT COM port / baud", 15, 483, 270);
+  label(L"CAT endpoint (COM or host:port) / baud", 15, 483, 270);
   combo(CATCOM, 15, 505, 130, {}, settings.catCOM, true);
   combo(CATBAUD, 150, 505, 125,
         {"1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200",
@@ -1961,7 +1974,7 @@ void makeUI() {
   button(SAVE, L"Save settings", 15, 636, 125);
   button(START, L"Start Modem", 150, 636, 125);
   reportingLabel = child(L"STATIC", L"PSK Reporter: off", 0, 15, 676, 280, 25);
-  label(L"Hamlib starts automatically with rigctl PTT.", 15, 702, 280);
+  label(L"Dummy simulates CAT; it cannot key a real radio.", 15, 702, 300);
   label(L"Audio gain / amplification", 330, 35, 430);
   label(L"RX gain dB (-20 to +20)", 330, 74, 400);
   edit(RXGAIN, 330, 98, 130, std::to_string(settings.rxGain));
@@ -1977,6 +1990,16 @@ void makeUI() {
   label(L"Theme changes apply immediately.", 330, 347, 650);
   label(L"Configure the radio here; chat and audio meters are on Chat.", 330,
         408, 650);
+  label(L"CAT service (used with rigctl PTT)", 330, 445, 400);
+  combo(RIGSERVICE, 330, 469, 280, {"Automatic Hamlib", "Existing rigctld"}, settings.rigService);
+  label(L"rigctld host / listening port", 330, 505, 420);
+  edit(RIGHOST, 330, 530, 205, settings.rigHost);
+  edit(RIGPORT, 545, 530, 85, std::to_string(settings.rigPort));
+  label(L"FLRig: model 4; CAT endpoint e.g. 127.0.0.1:12345.", 330, 568, 650);
+  label(L"Serial PTT only (com): port / line; no CAT required", 330, 610, 650);
+  combo(PTTPORT, 330, 638, 205, {}, settings.pttPort, true);
+  combo(PTTLINE, 545, 638, 125, {"rts", "dtr", "both"}, settings.pttLine);
+  label(L"Type virtual port names if missing from the list. none = audio only, no PTT.", 330, 678, 650);
   creatingPage = 0;
   label(L"Conversation", 300, 18, 88);
   combo(ROOMS, 390, 14, 220, {"Radio Chat"}, "Radio Chat");
